@@ -30,8 +30,9 @@ impl RcStr {
 
     pub fn trim(&self) -> Self {
         if let Some((word_start, _)) = self.char_indices().find(|(_, x)| !x.is_whitespace()) {
-            if let Some((word_end, _)) = self.char_indices().rev().find(|(_, x)| x.is_whitespace()) {
-                return self.slice(word_start..word_end).unwrap_or(self.clone());
+            if let Some((word_end, _)) = self.char_indices().rev().find(|(_, x)| !x.is_whitespace())
+            {
+                return self.slice(word_start..word_end + 1).unwrap_or(self.clone());
             }
         }
         self.clone()
@@ -43,6 +44,19 @@ impl RcStr {
 
     pub fn len(&self) -> usize {
         self.range.len()
+    }
+
+    pub fn merge(&self, other: Self) -> Option<Self> {
+        let is_same_ref = Rc::eq(&self.inner, &other.inner);
+        if is_same_ref && self.range.end == other.range.start {
+            let range = self.range.start..other.range.end;
+            Some(Self {
+                inner: self.inner.clone(),
+                range,
+            })
+        } else {
+            None
+        }
     }
 }
 

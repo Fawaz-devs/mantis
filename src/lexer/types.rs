@@ -1,3 +1,5 @@
+use std::char;
+
 use crate::utils::rc_str::RcStr;
 
 #[derive(Debug, Clone)]
@@ -19,6 +21,18 @@ impl NonTerminal {
             ")" => ArgumentClose,
             "#" => Macro,
             ";" => StatementEnd,
+            _ => return None,
+        })
+    }
+    pub fn from_char(s: char) -> Option<Self> {
+        use NonTerminal::*;
+        Some(match s {
+            '{' => BlockOpen,
+            '}' => BlockClose,
+            '(' => ArgumentOpen,
+            ')' => ArgumentClose,
+            '#' => Macro,
+            ';' => StatementEnd,
             _ => return None,
         })
     }
@@ -130,6 +144,7 @@ pub enum Token {
     Symbol(NonTerminal),
     Operator(Operator),
     Word(RcStr),
+    StringLiteral(RcStr),
     Unknown(RcStr),
 }
 

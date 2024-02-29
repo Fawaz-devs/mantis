@@ -12,7 +12,7 @@ const BREAKPOINTS: &str = "{}()[],.+=-*/$#|&;\"'";
 
 #[derive(Debug)]
 pub enum CodeWord {
-    BreakPoint(char),
+    Symbol(RcStr),
     Word(RcStr),
 }
 
@@ -27,19 +27,54 @@ impl CodeParser {
         let mut tokens = Vec::<CodeWord>::with_capacity(self.inner.len() * 4);
 
         let mut parsed_till = 0;
+        let mut inside_string_literal = false;
+        let mut prev_char = None;
         for (idx, c) in self.inner.char_indices() {
-            let is_breakpoint = BREAKPOINTS.chars().any(|x| x == c);
-            if is_breakpoint || c.is_whitespace() {
-                print!("PI: {parsed_till} IDX: {idx} BP: {:x?}\n", c);
-                if parsed_till < idx {
-                    let word = self.inner.clone().slice(parsed_till..idx)?.trim();
-                    tokens.push(CodeWord::Word(word));
+            if inside_string_literal {
+                if c == '"' && prev_char != Some('\\') {
+                    inside_string_literal = false;
+                    if parsed_till < idx {
+                        let word = self.inner.clone().slice(parsed_till..idx)?.trim();
+                        tokens.push(CodeWord::Word(word));
+                    }
+                    let symbol = self.inner.clone().slice(idx..idx + 1)?;
+                    tokens.push(CodeWord::Symbol(symbol));
+                    parsed_till = idx + 1;
                 }
-                if !c.is_whitespace() {
-                    tokens.push(CodeWord::BreakPoint(c));
+            } else {
+                let is_breakpoint = BREAKPOINTS.chars().any(|x| x == c);
+                if is_breakpoint {
+                    if c == '"' {
+                        inside_string_literal = true;
+                    }
+                    if parsed_till < idx {
+                        let word = self.inner.clone().slice(parsed_till..idx)?.trim();
+                        tokens.push(CodeWord::Word(word));
+                    }
+                    let symbol = self.inner.clone().slice(idx..idx + 1)?;
+                    tokens.push(CodeWord::Symbol(symbol));
+                    parsed_till = idx + 1;
+                } else if c.is_whitespace() {
+                    if parsed_till < idx {
+                        let word = self.inner.clone().slice(parsed_till..idx)?.trim();
+                        tokens.push(CodeWord::Word(word));
+                    }
+                    parsed_till = idx + 1;
                 }
-                parsed_till = idx + 1;
+                // if is_breakpoint || c.is_whitespace() {
+                //     print!("PI: {parsed_till} IDX: {idx} BP: {:x?}\n", c);
+                //     if parsed_till < idx {
+                //         let word = self.inner.clone().slice(parsed_till..idx)?.trim();
+                //         tokens.push(CodeWord::Word(word));
+                //     }
+                //     if !c.is_whitespace() {
+                //         let symbol = self.inner.clone().slice(idx..idx + 1)?;
+                //         tokens.push(CodeWord::Symbol(symbol));
+                //     }
+                //     parsed_till = idx + 1;
+                // }
             }
+            prev_char = Some(c);
         }
 
         Some(tokens)
