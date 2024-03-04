@@ -79,8 +79,17 @@ impl From<String> for RcStr {
     }
 }
 
-impl From<&str> for RcStr {
-    fn from(value: &str) -> Self {
-        Self::new(value.into())
+// impl From<&str> for RcStr {
+//     fn from(value: &str) -> Self {
+//         Self::new(value.into())
+//     }
+// }
+
+impl From<&'static str> for RcStr {
+    fn from(value: &'static str) -> Self {
+        Self {
+            range: 0..value.len(),
+            inner: value.into(),
+        }
     }
 }

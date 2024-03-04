@@ -1,5 +1,8 @@
-
-use std::{fmt::Display, ops::{Deref, Range}, rc::Rc};
+use std::{
+    fmt::Display,
+    ops::{Deref, Range},
+    rc::Rc,
+};
 
 #[derive(Debug)]
 pub struct RcVec<T> {
@@ -8,6 +11,12 @@ pub struct RcVec<T> {
 }
 
 impl<T> RcVec<T> {
+    pub fn empty() -> Self {
+        Self {
+            range: 0..0,
+            inner: Rc::new([]),
+        }
+    }
     pub fn new(s: Vec<T>) -> Self {
         let range = 0..s.len();
         let inner: Rc<[T]> = s.into();
@@ -44,7 +53,10 @@ impl<T> Deref for RcVec<T> {
 
 impl<T> Clone for RcVec<T> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), range: self.range.clone() }
+        Self {
+            inner: self.inner.clone(),
+            range: self.range.clone(),
+        }
     }
 }
 
@@ -52,7 +64,10 @@ use std::fmt::Debug;
 
 use super::rc_str::RcStr;
 
-impl<T> Display for RcVec<T> where T: Debug {
+impl<T> Display for RcVec<T>
+where
+    T: Debug,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self.as_slice())
     }
@@ -63,7 +78,10 @@ impl<T> From<Vec<T>> for RcVec<T> {
     }
 }
 
-impl<T> From<&[T]> for RcVec<T> where T: Clone {
+impl<T> From<&[T]> for RcVec<T>
+where
+    T: Clone,
+{
     fn from(value: &[T]) -> Self {
         Self::new(Vec::from(value))
     }

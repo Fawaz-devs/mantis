@@ -162,7 +162,7 @@ impl Token {
         if let Some(val) = Operator::from_str(s) {
             return (Self::Operator(val));
         } else {
-            return (Self::Unknown(s.into()));
+            return (Self::Unknown(s.to_string().into()));
         }
     }
 }
