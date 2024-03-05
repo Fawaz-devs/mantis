@@ -5,6 +5,7 @@ use std::io::Read;
 use lexer::lexer::Lexer;
 
 use crate::{
+    backend::cranelift::compile_program,
     lexer::ast::Program,
     lexer::{
         ast::{FunctionDeclaration, FunctionSignature, Type},
@@ -37,6 +38,8 @@ fn main() {
         vec![type_i32.clone(), type_void.clone()],
         vec![print_fn, main_fn],
     );
+
+    compile_program(program, "/tmp/mantis_out.o").unwrap();
 
     println!("");
 }

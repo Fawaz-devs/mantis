@@ -8,3 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.80"
 cranelift = "0.105.2"
+cranelift-jit = "0.105.2"
+cranelift-module = "0.105.2"
+cranelift-native = "0.105.2"
+cranelift-object = "0.105.2"
