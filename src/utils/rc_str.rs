@@ -4,19 +4,62 @@ use std::{
     rc::Rc,
 };
 
+#[derive(Debug, Clone)]
+enum Kind {
+    Static(&'static str),
+    Shared(Rc<str>),
+}
+
+impl Deref for Kind {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Kind::Static(s) => s,
+            Kind::Shared(s) => s.deref(),
+        }
+    }
+}
+
+impl PartialOrd for RcStr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.as_str().partial_cmp(other.as_str())
+    }
+}
+
+impl Ord for RcStr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RcStr {
-    inner: Rc<str>,
+    inner: Kind,
     range: Range<usize>,
 }
 
-impl RcStr {
-    pub fn new(s: String) -> Self {
-        let range = 0..s.len();
-        let inner: Rc<str> = s.into();
+impl std::cmp::Eq for RcStr {}
 
-        Self { inner, range }
+impl std::hash::Hash for RcStr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state)
     }
+}
+
+impl PartialEq for RcStr {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl RcStr {
+    // pub fn new(s: String) -> Self {
+    //     let range = 0..s.len();
+    //     let inner: Rc<str> = s.into();
+
+    //     Self { inner, range }
+    // }
     pub fn slice(&self, range: Range<usize>) -> Option<Self> {
         if self.range.start + range.end > self.inner.len() {
             return None;
@@ -46,18 +89,18 @@ impl RcStr {
         self.range.len()
     }
 
-    pub fn merge(&self, other: Self) -> Option<Self> {
-        let is_same_ref = Rc::eq(&self.inner, &other.inner);
-        if is_same_ref && self.range.end == other.range.start {
-            let range = self.range.start..other.range.end;
-            Some(Self {
-                inner: self.inner.clone(),
-                range,
-            })
-        } else {
-            None
-        }
-    }
+    // pub fn merge(&self, other: Self) -> Option<Self> {
+    //     let is_same_ref = Rc::eq(&self.inner, &other.inner);
+    //     if is_same_ref && self.range.end == other.range.start {
+    //         let range = self.range.start..other.range.end;
+    //         Some(Self {
+    //             inner: self.inner.clone(),
+    //             range,
+    //         })
+    //     } else {
+    //         None
+    //     }
+    // }
 }
 
 impl Deref for RcStr {
@@ -75,7 +118,10 @@ impl Display for RcStr {
 }
 impl From<String> for RcStr {
     fn from(value: String) -> Self {
-        Self::new(value)
+        Self {
+            range: 0..value.len(),
+            inner: Kind::Shared(value.into()),
+        }
     }
 }
 
@@ -89,7 +135,7 @@ impl From<&'static str> for RcStr {
     fn from(value: &'static str) -> Self {
         Self {
             range: 0..value.len(),
-            inner: value.into(),
+            inner: Kind::Static(value),
         }
     }
 }

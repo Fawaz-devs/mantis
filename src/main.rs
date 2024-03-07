@@ -1,11 +1,13 @@
 #![allow(unused)]
 
-use std::io::Read;
+use std::{collections::HashMap, io::Read};
 
+use cranelift::codegen::ir::types::I64;
 use lexer::lexer::Lexer;
 
 use crate::{
     backend::cranelift::compile_program,
+    frontend::variable::MsVariable,
     lexer::ast::Program,
     lexer::{
         ast::{FunctionDeclaration, FunctionSignature, Type},
@@ -15,32 +17,41 @@ use crate::{
 };
 
 mod backend;
+mod frontend;
 mod lexer;
 mod utils;
 
 fn main() {
     // let file_path = std::env::args().skip(1).next().unwrap();
     // compile_file(&file_path);
-    let type_i32 = Type::new("i32");
-    let type_void = Type::new("void");
+    // let type_i32 = Type::new("i32");
+    // let type_void = Type::new("void");
 
-    let print_fn = FunctionDeclaration::new(
-        FunctionSignature::new("print", vec![type_i32.clone()], type_void.clone()),
-        vec![],
-    );
+    // let print_fn = FunctionDeclaration::new(
+    //     FunctionSignature::new("print", vec![type_i32.clone()], type_void.clone()),
+    //     vec![],
+    // );
 
-    let main_fn = FunctionDeclaration::new(
-        FunctionSignature::new("main", vec![], type_void.clone()),
-        vec![],
-    );
+    // let main_fn = FunctionDeclaration::new(
+    //     FunctionSignature::new("main", vec![], type_void.clone()),
+    //     vec![],
+    // );
 
-    let program = Program::new(
-        vec![type_i32.clone(), type_void.clone()],
-        vec![print_fn, main_fn],
-    );
+    // let program = Program::new(
+    //     vec![type_i32.clone(), type_void.clone()],
+    //     vec![print_fn, main_fn],
+    // );
 
-    compile_program(program, "/tmp/mantis_out.o").unwrap();
+    // compile_program(program, "/tmp/mantis_out.o").unwrap();
 
+    frontend::function::test("/tmp/mantis_add.o");
+
+    // let mut map = HashMap::new();
+
+    // map.insert(RcStr::from("hello"), String::from("Hello"));
+    // let result = map.get(&RcStr::from("hello")).unwrap();
+
+    // print!("{}", result);
     println!("");
 }
 

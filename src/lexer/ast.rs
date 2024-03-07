@@ -1,3 +1,10 @@
+use std::{collections::HashMap, rc::Rc};
+
+use cranelift::{
+    codegen::entity::EntityRef, frontend::FunctionBuilder, prelude::Variable as CVariable,
+    prelude::*,
+};
+
 use crate::utils::{rc_str::RcStr, rc_vec::RcVec};
 
 pub struct Program {
@@ -17,21 +24,27 @@ impl Program {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Variable {
     pub name: RcStr,
     pub r#type: Type,
     pub is_mutable: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, PartialOrd)]
 pub struct Type {
-    pub name: RcStr,
+    pub name: String,
+    pub size: usize,
+    pub inner_type: Option<Box<Type>>,
 }
 
 impl Type {
-    pub fn new(name: impl Into<RcStr>) -> Self {
-        Self { name: name.into() }
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            size: 8,
+            inner_type: None,
+        }
     }
 }
 
@@ -107,12 +120,36 @@ pub enum Operation {
     Sub,
     Mul,
     Div,
+    LogicAnd,
+    LogicOr,
 }
 
 #[derive(Clone)]
 pub enum Expression {
-    Assign(AssignExpression),
-    Binary(BinaryExpression),
-    MethodCall(MethodCallExpression),
+    Assign(Variable, Variable),
+    Binary(Variable, Operation, Variable),
     FunctionCall(FunctionCallExpression),
+}
+
+impl Expression {
+    pub fn compile(
+        &self,
+        mut builder: FunctionBuilder,
+        mut variables: HashMap<RcStr, (Variable, CVariable)>,
+    ) -> anyhow::Result<()> {
+        match self {
+            Expression::Assign(lhs, rhs) => {
+                if let Some(var) = variables.get_mut(&lhs.name) {
+                } else {
+                    let var = CVariable::new(1);
+                    let val = Value::new(1);
+                    variables.insert(lhs.name.clone(), (lhs.clone(), var));
+                    builder.def_var(var, val);
+                }
+            }
+            Expression::Binary(_, _, _) => todo!(),
+            Expression::FunctionCall(_) => todo!(),
+        }
+        Ok(())
+    }
 }
