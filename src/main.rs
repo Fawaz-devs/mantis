@@ -13,47 +13,19 @@ use crate::{
         ast::{FunctionDeclaration, FunctionSignature, Type},
         code_parser::{CodeParser, CodeWord},
     },
+    libc::libc::malloc_test,
     utils::{rc_str::RcStr, rc_vec::RcVec},
 };
 
 mod backend;
 mod frontend;
 mod lexer;
+mod libc;
 mod utils;
 
 fn main() {
-    // let file_path = std::env::args().skip(1).next().unwrap();
-    // compile_file(&file_path);
-    // let type_i32 = Type::new("i32");
-    // let type_void = Type::new("void");
-
-    // let print_fn = FunctionDeclaration::new(
-    //     FunctionSignature::new("print", vec![type_i32.clone()], type_void.clone()),
-    //     vec![],
-    // );
-
-    // let main_fn = FunctionDeclaration::new(
-    //     FunctionSignature::new("main", vec![], type_void.clone()),
-    //     vec![],
-    // );
-
-    // let program = Program::new(
-    //     vec![type_i32.clone(), type_void.clone()],
-    //     vec![print_fn, main_fn],
-    // );
-
-    // compile_program(program, "/tmp/mantis_out.o").unwrap();
-
-    let file_path = "/tmp/mantis_main.o";
-    frontend::function::test(file_path);
-    create_executable(file_path, "/tmp/mantis_main").unwrap();
-
-    // let mut map = HashMap::new();
-
-    // map.insert(RcStr::from("hello"), String::from("Hello"));
-    // let result = map.get(&RcStr::from("hello")).unwrap();
-
-    // print!("{}", result);
+    let bytes = malloc_test().unwrap();
+    std::fs::write("/tmp/malloc.o", bytes).unwrap();
     println!("");
 }
 
