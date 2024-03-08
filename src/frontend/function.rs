@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashMap};
 use cranelift::{
     codegen::{
         ir::{
-            types::I64, AbiParam, FuncRef, InstBuilder, Signature, UserExternalName, UserFuncName,
-            Value,
+            types::{I32, I64, R64},
+            AbiParam, FuncRef, InstBuilder, Signature, UserExternalName, UserFuncName, Value,
         },
         Context,
     },
@@ -46,8 +46,10 @@ impl Expression {
             Expression::Assign(lhs, rhs) => {
                 let val = local_variables.get(&rhs.name).unwrap().c_val;
                 if let Some(var) = local_variables.get_mut(&lhs.name) {
+                    print!("Assigned Varible {} with {}\n", lhs.name, rhs.name);
                     fbx.def_var(var.c_var, val);
                 } else {
+                    print!("Declaring Varible {} with 0\n", lhs.name);
                     Expression::Declare(lhs.clone(), RcStr::from("0"))
                         .translate(local_variables, fbx, ms_ctx)
                         .unwrap();
@@ -108,6 +110,7 @@ impl Expression {
                 }
             }
             Expression::Return(val) => {
+                print!("Returning variable {}\n", val.name);
                 let val = local_variables.get(&val.name).unwrap().c_val;
                 fbx.ins().return_(&[val]);
                 return Ok(None);
@@ -286,8 +289,29 @@ pub fn print_i64_fn() -> Function {
     }
 }
 
+pub fn main_fn() -> Function {
+    let argc = MsVariable::new("argc", "i32", I32);
+    let argv = MsVariable::new("argv", "char*", R64);
+    let exit_code = MsVariable::new("exit_code", "i32", I32);
+    let signature = FunctionSignature {
+        name: "main".into(),
+        params: RcVec::from(vec![argc.clone(), argv.clone()]),
+        returns: Some(exit_code.clone()),
+    };
+    let expressions = RcVec::from(vec![
+        // Expression::Assign(exit_code.clone(), argc.clone()),
+        Expression::Return(argc.clone()),
+    ]);
+    Function {
+        signature,
+        expressions,
+        is_external: false,
+    }
+}
+
 pub fn test(out_path: &str) {
-    let functions = vec![print_i64_fn(), add_fn(), sub_fn()];
+    // let functions = vec![print_i64_fn(), add_fn(), sub_fn()];
+    let functions = vec![main_fn()];
     let bytes = compile(RcVec::from(functions)).unwrap();
 
     std::fs::write(out_path, bytes).unwrap();

@@ -44,7 +44,9 @@ fn main() {
 
     // compile_program(program, "/tmp/mantis_out.o").unwrap();
 
-    frontend::function::test("/tmp/mantis_add.o");
+    let file_path = "/tmp/mantis_main.o";
+    frontend::function::test(file_path);
+    create_executable(file_path, "/tmp/mantis_main").unwrap();
 
     // let mut map = HashMap::new();
 
@@ -53,6 +55,15 @@ fn main() {
 
     // print!("{}", result);
     println!("");
+}
+
+pub fn create_executable(input_file: &str, output_file: &str) -> anyhow::Result<()> {
+    let child = std::process::Command::new("gcc")
+        .arg(input_file)
+        .arg("-o")
+        .arg(output_file)
+        .spawn()?;
+    Ok(())
 }
 
 pub fn compile_file(file_path: &str) {

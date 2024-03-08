@@ -10,7 +10,9 @@ use cranelift::{
         settings, Context,
     },
     frontend::{FunctionBuilder, FunctionBuilderContext},
+    prelude::settings::{Configurable, Flags},
 };
+
 use cranelift_module::{
     default_libcall_names, DataDescription, FuncId, Linkage, Module, ModuleError,
 };
@@ -55,8 +57,11 @@ pub struct MsContext {
 pub fn compile(functions: RcVec<Function>) -> anyhow::Result<Vec<u8>> {
     let data_description = DataDescription::new();
     let mut flag_builder = settings::builder();
+    flag_builder.set("is_pic", "true");
+    flag_builder.set("use_colocated_libcalls", "false");
+    let flags = Flags::new(flag_builder);
     let isa_builder = cranelift_native::builder().map_err(|x| anyhow!(x))?;
-    let isa = isa_builder.finish(settings::Flags::new(flag_builder))?;
+    let isa = isa_builder.finish(flags)?;
     let libcalls = default_libcall_names();
     let mut module = ObjectModule::new(ObjectBuilder::new(isa.clone(), "main", libcalls)?);
     let mut fbx = FunctionBuilderContext::new();
