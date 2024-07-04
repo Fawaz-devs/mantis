@@ -3,7 +3,9 @@ use cranelift::{
     codegen::{
         entity::EntityRef,
         ir::{
-            self, types, AbiParam, FuncRef, Inst, InstBuilder, MemFlags, UserExternalName,
+            self,
+            types::{self, I64},
+            AbiParam, FuncRef, GlobalValueData, Inst, InstBuilder, MemFlags, UserExternalName,
             UserFuncName,
         },
         settings::{self, Configurable},
@@ -95,14 +97,21 @@ pub fn malloc_test() -> anyhow::Result<Vec<u8>> {
         let call_inst = builder.ins().call(func_ref, &[size_val]);
         let malloc_ptr = builder.inst_results(call_inst)[0];
         let const_str = "Hello World\n\0";
-        for (i, c) in const_str.bytes().enumerate() {
-            let val = builder.ins().iconst(types::I8, c as i64);
-            builder
-                .ins()
-                .store(MemFlags::trusted(), val, malloc_ptr, i as i32);
-        }
+        let data_id = module.declare_data("const_str", Linkage::Local, false, false)?;
+        let mut data_description = DataDescription::new();
+        data_description.define(const_str.as_bytes().into());
+        module.define_data(data_id, &data_description)?;
+        // let string_ptr = malloc_ptr;
+        // for (i, c) in const_str.bytes().enumerate() {
+        //     let val = builder.ins().iconst(types::I8, c as i64);
+        //     builder
+        //         .ins()
+        //         .store(MemFlags::trusted(), val, malloc_ptr, i as i32);
+        // }
+        let string_ptr = module.declare_data_in_func(data_id, builder.func);
         let func_ref = module.declare_func_in_func(libc_puts_fn_id, &mut builder.func);
-        let call_inst = builder.ins().call(func_ref, &[malloc_ptr]);
+        let string_ptr = builder.ins().global_value(I64, string_ptr);
+        let call_inst = builder.ins().call(func_ref, &[string_ptr]);
         let puts_result = builder.inst_results(call_inst)[0];
         builder.ins().return_(&[puts_result]);
         builder.seal_all_blocks();

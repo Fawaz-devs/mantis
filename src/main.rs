@@ -7,10 +7,9 @@ use lexer::lexer::Lexer;
 
 use crate::{
     backend::cranelift::compile_program,
-    frontend::variable::MsVariable,
-    lexer::ast::Program,
+    frontend::{tokenizer::read_to_tokens, variable::MsVariable},
     lexer::{
-        ast::{FunctionDeclaration, FunctionSignature, Type},
+        ast::{FunctionDeclaration, FunctionSignature, Program, Type},
         code_parser::{CodeParser, CodeWord},
     },
     libc::libc::malloc_test,
@@ -24,9 +23,13 @@ mod libc;
 mod utils;
 
 fn main() {
-    let bytes = malloc_test().unwrap();
-    std::fs::write("/tmp/malloc.o", bytes).unwrap();
-    println!("");
+    let filepath = std::env::args().last().unwrap();
+    let input = std::fs::read_to_string(filepath).unwrap();
+    let _ = read_to_tokens(input);
+
+    // let bytes = malloc_test().unwrap();
+    // std::fs::write("/tmp/malloc.o", bytes).unwrap();
+    // println!("");
 }
 
 pub fn create_executable(input_file: &str, output_file: &str) -> anyhow::Result<()> {
