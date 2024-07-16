@@ -1,8 +1,6 @@
-use "std/*";
 
 fn main() {
-	let a: u64 = 199;
-	let b = a + 1;
+	let a = 199;
+	let b = a;
 	print("Hello World");
-	print(b.to_string());
 }

@@ -2,7 +2,9 @@ use logos::{Lexer, Logos};
 
 use crate::frontend::tokens::MantisLexerTokens;
 
-use super::tokens::{ConstLiteral, Expression, Keyword, Token, Variable, VariableType};
+use super::tokens::{
+    ConstLiteral, Expression, FunctionDeclaration, Keyword, Token, Variable, VariableType,
+};
 
 pub fn read_to_tokens(input: String) -> Vec<Token> {
     let mut tokens = Vec::new();
@@ -11,7 +13,10 @@ pub fn read_to_tokens(input: String) -> Vec<Token> {
 
     while let Some(token) = lexer.next() {
         match token {
-            Ok(MantisLexerTokens::FunctionDecl) => {}
+            Ok(MantisLexerTokens::FunctionDecl) => {
+                let decl = parse_fn_declaration(&mut lexer);
+                println!("{:?}", decl);
+            }
 
             _ => print!("Unsupported token {:?}\n", lexer.span()),
         };
@@ -20,11 +25,12 @@ pub fn read_to_tokens(input: String) -> Vec<Token> {
     return tokens;
 }
 
-pub fn parse_fn_declaration(lexer: &mut Lexer<'_, MantisLexerTokens>) {
+pub fn parse_fn_declaration(lexer: &mut Lexer<'_, MantisLexerTokens>) -> FunctionDeclaration {
     let mut fn_name = String::new();
     let mut arguments = Vec::new();
     let mut is_external = false;
     let mut fn_scope = Vec::new();
+    let mut return_type = VariableType(String::from("void"));
     while let Some(token) = lexer.next() {
         match token {
             Ok(MantisLexerTokens::Word(value)) => {
@@ -54,57 +60,93 @@ pub fn parse_fn_declaration(lexer: &mut Lexer<'_, MantisLexerTokens>) {
             _ => print!("Unsupported token {:?}\n", lexer.span()),
         }
     }
+
+    return FunctionDeclaration {
+        name: fn_name,
+        arguments,
+        body: Some(fn_scope),
+        return_type,
+    };
 }
 
 pub fn parse_scope(lexer: &mut Lexer<'_, MantisLexerTokens>) -> Vec<Expression> {
     let mut expressions = Vec::<Expression>::new();
-    while let Some(token) = lexer.next() {
-        match token {
-            Ok(MantisLexerTokens::BraceOpen) => {
-                expressions.extend(parse_scope(lexer));
-            }
 
-            Ok(MantisLexerTokens::BraceClose) => {
-                break;
-            }
-
-            Ok(t) => {
-                expressions.push(parse_expression(lexer));
-            }
-
-            _ => panic!("Unsupported token {:?}\n", lexer.span()),
+    loop {
+        let expression = parse_expression(lexer);
+        if matches!(expression, Expression::Nil) {
+            break;
         }
+        expressions.push(expression);
     }
+
     expressions
 }
 
 pub fn parse_expression(lexer: &mut Lexer<'_, MantisLexerTokens>) -> Expression {
     let mut expression = Expression::Nil;
-    let mut next_is_type = false;
+    let mut tokens = Vec::new();
     while let Some(token) = lexer.next() {
         match token {
-            Ok(MantisLexerTokens::Let) => {
-                expression = Expression::Declare(Variable::default(), ConstLiteral::default());
+            Ok(MantisLexerTokens::SemiColon) => {
+                expression = build_ast(tokens);
+                break;
             }
-
-            Ok(MantisLexerTokens::Word(value)) => {
-                if let Expression::Declare(var, con) = &mut expression {
-                    if next_is_type {
-                        var.var_type.0 = value;
-                    } else {
-                        var.name = value;
-                    }
-                }
+            Ok(token) => {
+                tokens.push(token);
             }
-
-            Ok(MantisLexerTokens::Colon) => next_is_type = true,
-
-            Ok(MantisLexerTokens::SemiColon) => break,
-            _ => panic!("Unsupported token {:?}\n", lexer.span()),
+            _ => panic!("Unsupported token {:?}, {}\n", lexer.span(), lexer.slice()),
         }
     }
 
     expression
+}
+
+pub fn build_ast(tokens: Vec<MantisLexerTokens>) -> Expression {
+    match tokens.as_slice() {
+        [MantisLexerTokens::Let, MantisLexerTokens::Word(var_name), MantisLexerTokens::Assign, MantisLexerTokens::Integer(val)] =>
+        {
+            return Expression::Declare(
+                Variable::new(var_name, VariableType("i64".into())),
+                Box::new(Expression::ConstLiteral(
+                    Variable::const_i64(),
+                    val.to_string(),
+                )),
+            );
+        }
+        [MantisLexerTokens::Let, MantisLexerTokens::Word(var_name), MantisLexerTokens::Assign, MantisLexerTokens::Float(val)] =>
+        {
+            return Expression::Declare(
+                Variable::new(var_name, VariableType("i64".into())),
+                Box::new(Expression::ConstLiteral(
+                    Variable::const_f64(),
+                    val.to_string(),
+                )),
+            );
+        }
+        [MantisLexerTokens::Let, MantisLexerTokens::Word(var_name), MantisLexerTokens::Assign, MantisLexerTokens::Word(val_name)] =>
+        {
+            return Expression::Declare(
+                Variable::new(var_name, VariableType("i64".into())),
+                Box::new(Expression::Variable(Variable::new(
+                    val_name,
+                    VariableType::default(),
+                ))),
+            );
+        }
+
+        [MantisLexerTokens::Word(fn_name), MantisLexerTokens::BracketOpen, MantisLexerTokens::String(value), MantisLexerTokens::BracketClose] => {
+            return Expression::Call(
+                Variable::new(fn_name, VariableType("fn".into())),
+                vec![Expression::Variable(Variable::new(
+                    value,
+                    VariableType("string".into()),
+                ))],
+            )
+        }
+        _ => {}
+    }
+    panic!("Invalid expression not supported");
 }
 
 pub fn parse_arguments(lexer: &mut Lexer<'_, MantisLexerTokens>) -> Vec<Variable> {

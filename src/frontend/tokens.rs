@@ -1,3 +1,10 @@
+use std::collections::BTreeMap;
+
+use cranelift::{
+    codegen::ir::{types, AbiParam, Type},
+    frontend::FunctionBuilder,
+    prelude::*,
+};
 use logos::Logos;
 
 #[derive(Logos, Clone, Debug)]
@@ -9,7 +16,7 @@ pub enum Keyword {
     Fn,
 }
 
-#[derive(Logos, Clone, Debug)]
+#[derive(Logos, Clone, PartialEq, PartialOrd)]
 #[logos(skip r"[ \t\r\n\f]+")]
 pub enum MantisLexerTokens {
     #[token("false", |_| false)]
@@ -111,35 +118,117 @@ pub struct Variable {
     pub var_type: VariableType,
 }
 
+impl Variable {
+    pub fn new(name: impl Into<String>, var_type: VariableType) -> Self {
+        Self {
+            name: name.into(),
+            var_type,
+        }
+    }
+
+    pub fn const_i64() -> Self {
+        let val = rand::random::<u32>();
+        Self {
+            name: format!("ci64_{val}"),
+            var_type: VariableType("i64".into()),
+        }
+    }
+    pub fn const_f64() -> Self {
+        let val = rand::random::<u32>();
+        Self {
+            name: format!("fi64_{val}"),
+            var_type: VariableType("f64".into()),
+        }
+    }
+    pub fn const_bool() -> Self {
+        let val = rand::random::<u32>();
+        Self {
+            name: format!("bool_{val}"),
+            var_type: VariableType("bool".into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ConstLiteral(Variable);
 
 #[derive(Clone, Debug)]
 pub enum Expression {
-    Assign(Variable, Variable),
-    Declare(Variable, ConstLiteral),
-    Add(Variable, Variable),
-    Subtract(Variable, Variable),
-    Multiply(Variable, Variable),
-    Divide(Variable, Variable),
-    Call(Variable, Vec<Variable>),
+    Assign(Variable, Box<Expression>),
+    ConstLiteral(Variable, String), // Variable and Value
+    Variable(Variable),             // Variable and Value
+    Declare(Variable, Box<Expression>),
+    Add(Variable, Box<Expression>),
+    Subtract(Variable, Box<Expression>),
+    Multiply(Variable, Box<Expression>),
+    Divide(Variable, Box<Expression>),
+    Call(Variable, Vec<Expression>),
     Cast(Variable, Variable),
     Nil,
 }
 
 #[derive(Clone, Debug)]
 pub struct FunctionDeclaration {
-    name: String,
-    return_type: VariableType,
-    arguments: Vec<VariableType>,
-    is_external: bool,
+    pub name: String,
+    pub return_type: VariableType,
+    pub arguments: Vec<Variable>,
+    pub body: Option<Vec<Expression>>,
 }
 
-#[derive(Clone, Debug)]
-pub enum Syntax {
-    Scope(Vec<Expression>),
-    FunctionDeclaration(FunctionDeclaration),
+pub fn ms_type_to_native_type(var_type: &VariableType) -> Type {
+    match var_type.0.as_str() {
+        "string" => types::I64,
+        "f64" => types::F64,
+        _ => types::I64,
+    }
 }
+
+impl FunctionDeclaration {
+    pub(crate) fn declare(
+        &self,
+        ctx: &mut cranelift::prelude::codegen::Context,
+        fbx: &mut cranelift::prelude::FunctionBuilderContext,
+    ) {
+        ctx.func.signature.params = self
+            .arguments
+            .iter()
+            .map(|x| AbiParam::new(ms_type_to_native_type(&x.var_type)))
+            .collect();
+
+        if !self.return_type.0.is_empty() && self.return_type.0 != "void" {
+            ctx.func
+                .signature
+                .returns
+                .push(AbiParam::new(ms_type_to_native_type(&self.return_type)));
+        }
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
+
+        let entry_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+
+        builder.seal_all_blocks();
+
+        let mut variables = BTreeMap::new();
+
+        let values = builder.block_params(entry_block).to_vec();
+        for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
+            let var = cranelift_frontend::Variable::new();
+
+            variables.insert(variable.name.clone(), value);
+        }
+
+        todo!()
+    }
+}
+
+// #[derive(Clone, Debug)]
+// pub enum Syntax {
+//     Scope(Vec<Expression>),
+//     FunctionDeclaration(FunctionDeclaration),
+// }
 
 #[derive(Clone, Debug)]
 pub enum Operator {
