@@ -2,12 +2,13 @@
 
 use std::{collections::HashMap, io::Read};
 
+use clap::Parser;
 use cranelift::codegen::ir::types::I64;
 use lexer::lexer::Lexer;
 
 use crate::{
     backend::cranelift::compile_program,
-    frontend::{tokenizer::read_to_tokens, variable::MsVariable},
+    frontend::{compiler, tokenizer::read_to_tokens, variable::MsVariable},
     lexer::{
         ast::{FunctionDeclaration, FunctionSignature, Program, Type},
         code_parser::{CodeParser, CodeWord},
@@ -22,23 +23,53 @@ mod lexer;
 mod libc;
 mod utils;
 
-fn main() {
-    let filepath = std::env::args().last().unwrap();
-    let input = std::fs::read_to_string(filepath).unwrap();
-    let _ = read_to_tokens(input);
+#[derive(clap::Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    // Input Mantis File
+    input: String,
 
-    // let bytes = malloc_test().unwrap();
-    // std::fs::write("/tmp/malloc.o", bytes).unwrap();
-    // println!("");
+    // Print AST to a file or console
+    #[arg(long)]
+    ast: Option<String>,
+
+    // Output executable
+    #[arg(long, short)]
+    output: Option<String>,
 }
 
-pub fn create_executable(input_file: &str, output_file: &str) -> anyhow::Result<()> {
-    let child = std::process::Command::new("gcc")
-        .arg(input_file)
+fn main() {
+    env_logger::init();
+
+    let args = Args::parse();
+
+    let filepath = args.input;
+
+    let input = std::fs::read_to_string(filepath).unwrap();
+    let fns = read_to_tokens(input);
+    if let Some(ast_path) = args.ast {
+        std::fs::write(ast_path, format!("{:#?}", fns)).unwrap();
+    }
+
+    if let Some(output_file_path) = args.output {
+        create_executable(fns, &output_file_path);
+    }
+}
+
+fn create_executable(fns: Vec<frontend::tokens::FunctionDeclaration>, output: &str) {
+    let bytes = compiler::compile(fns).unwrap();
+    let object_file = "/tmp/main.o";
+    std::fs::write(object_file, bytes).unwrap();
+
+    let mut child = std::process::Command::new("gcc")
+        .arg(object_file)
         .arg("-o")
-        .arg(output_file)
-        .spawn()?;
-    Ok(())
+        .arg(output)
+        .spawn()
+        .unwrap();
+    let exit_code = child.wait().unwrap();
+    log::info!("gcc exit code: {}", exit_code);
+    log::info!("compiled to {}", output);
 }
 
 pub fn compile_file(file_path: &str) {

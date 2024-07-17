@@ -5,6 +5,8 @@ use cranelift::{
 use cranelift_module::{default_libcall_names, DataDescription, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
+use crate::libc::libc::link_libc_functions;
+
 use super::tokens::FunctionDeclaration;
 use anyhow::anyhow;
 
@@ -23,9 +25,18 @@ pub fn compile(functions: Vec<FunctionDeclaration>) -> anyhow::Result<Vec<u8>> {
 
     // let print_i64_fn = declare_print_i64_fn(&mut module, &mut ctx)?;
 
+    // let libc_fns = link_libc_functions(&mut module, &mut fbx, &mut ctx).unwrap();
+    // println!("LIBC FNS: {:?}", libc_fns);
+
+    let mut offset = 0usize;
     for function in functions {
-        function.declare(&mut ctx, &mut fbx);
+        function.declare(&mut ctx, &mut fbx, &mut module, offset);
+        offset += 100;
     }
 
-    Ok(Vec::new())
+    let obj = module.finish();
+
+    let bytes = obj.emit()?;
+
+    Ok(bytes)
 }
