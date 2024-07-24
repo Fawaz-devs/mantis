@@ -58,7 +58,6 @@ pub fn declare_external_function(
     fbx: &mut FunctionBuilderContext,
     ctx: &mut cranelift::prelude::codegen::Context,
 ) -> anyhow::Result<FuncId> {
-    println!("{fn_name} -> {wrapper_fn_name}");
     ctx.func.signature = fn_signature.clone();
     let func_id = module
         .declare_function(fn_name, Linkage::Import, &ctx.func.signature)
@@ -85,6 +84,13 @@ pub fn declare_external_function(
     module.define_function(id, ctx)?;
 
     module.clear_context(ctx);
+
+    log::info!(
+        "External Function Declared {} {} {}",
+        fn_name,
+        wrapper_fn_name,
+        func_id
+    );
 
     Ok(id)
 }

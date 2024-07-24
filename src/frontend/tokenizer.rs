@@ -7,6 +7,17 @@ use super::tokens::{
     ConstLiteral, Expression, FunctionDeclaration, Keyword, MsVariable, Node, Token, VariableType,
 };
 
+pub fn collect_to_tokens(input: &str) {
+    let mut lexer = MantisLexerTokens::lexer(&input);
+
+    while let Some(token) = lexer.next() {
+        match token {
+            Ok(token) => log::info!("{:?}, {:?} {}", token, lexer.span(), lexer.slice()),
+            Err(err) => log::error!("unknown token {:?} {}", lexer.span(), lexer.slice()),
+        }
+    }
+}
+
 pub fn read_to_tokens(input: String) -> Vec<FunctionDeclaration> {
     let mut lexer = MantisLexerTokens::lexer(&input);
 
@@ -55,7 +66,9 @@ pub fn parse_fn_declaration(lexer: &mut Lexer<'_, MantisLexerTokens>) -> Functio
                 if fn_name.is_empty() {
                     fn_name = value;
                 } else {
-                    return_type = Some(map_type_to_native(&value).expect("Invalid Return Type"));
+                    return_type = Some(
+                        map_type_to_native(&value).expect(&format!("Invalid Return Type {value}")),
+                    );
                 }
             }
             Ok(MantisLexerTokens::BracketOpen) => {
@@ -132,7 +145,8 @@ pub fn parse_let_expression(tokens: &[MantisLexerTokens]) -> Option<Expression> 
     {
         return Some(Expression::Declare(
             MsVariable::new(var_name, VariableType::Native(types::I64)),
-            Node::parse(&tokens[2..]).unwrap(),
+            Node::parse(&tokens[2..])
+                .expect(&format!("Node Parse Failed with Tokens {:?}", tokens)),
         ));
     }
 
@@ -160,7 +174,11 @@ pub fn parse_fn_call_args(tokens: &[MantisLexerTokens]) -> Vec<Node> {
     let mut args = Vec::new();
 
     for chunk in tokens.split(|x| *x == MantisLexerTokens::Comma) {
-        args.push(Node::parse(chunk).unwrap());
+        if let Ok(arg) = (Node::parse(chunk)) {
+            args.push(arg);
+        } else {
+            break;
+        }
     }
 
     return args;

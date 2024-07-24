@@ -4,6 +4,7 @@ use std::{collections::HashMap, io::Read};
 
 use clap::Parser;
 use cranelift::codegen::ir::types::I64;
+use frontend::tokenizer::collect_to_tokens;
 use lexer::lexer::Lexer;
 
 use crate::{
@@ -46,7 +47,11 @@ fn main() {
     let filepath = args.input;
 
     let input = std::fs::read_to_string(filepath).unwrap();
+
+    // collect_to_tokens("let a = 100.2; b = 0.89");
+
     let fns = read_to_tokens(input);
+
     if let Some(ast_path) = args.ast {
         std::fs::write(ast_path, format!("{:#?}", fns)).unwrap();
     }
