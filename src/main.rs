@@ -9,7 +9,12 @@ use lexer::lexer::Lexer;
 
 use crate::{
     backend::cranelift::compile_program,
-    frontend::{compiler, tokenizer::read_to_tokens, variable::MsVariable},
+    frontend::{
+        compiler,
+        tokenizer::read_to_tokens,
+        tokens::{BuiltInType, StructMapBuilder, StructRegistry, VariableType},
+        variable::MsVariable,
+    },
     lexer::{
         ast::{FunctionDeclaration, FunctionSignature, Program, Type},
         code_parser::{CodeParser, CodeWord},
@@ -39,7 +44,28 @@ struct Args {
     output: Option<String>,
 }
 
+fn test() {
+    let mut registry = StructRegistry::new();
+    let mut s1 = StructMapBuilder::new();
+    s1.add_field("a", VariableType::BuiltIn(BuiltInType::I32), &registry);
+    s1.add_field("b", VariableType::BuiltIn(BuiltInType::I64), &registry);
+    s1.add_field("c", VariableType::BuiltIn(BuiltInType::F32), &registry);
+    dbg!(&s1);
+    registry.add_struct("s1".into(), s1);
+
+    let mut s2 = StructMapBuilder::new();
+    s2.add_field("d", VariableType::Custom("s1".into()), &registry);
+    s2.add_field("d2", VariableType::Custom("s1".into()), &registry);
+    s2.add_field("a", VariableType::BuiltIn(BuiltInType::I32), &registry);
+    // s2.add_field("b", VariableType::BuiltIn(BuiltInType::I64), &registry);
+    // s2.add_field("c", VariableType::BuiltIn(BuiltInType::F32), &registry);
+    dbg!(&s2);
+}
+
 fn main() {
+    // test();
+    // panic!("Test is done");
+
     env_logger::init();
 
     let args = Args::parse();
@@ -50,19 +76,23 @@ fn main() {
 
     // collect_to_tokens("let a = 100.2; b = 0.89");
 
-    let fns = read_to_tokens(input);
+    let (fns, sr) = read_to_tokens(input);
 
     if let Some(ast_path) = args.ast {
-        std::fs::write(ast_path, format!("{:#?}", fns)).unwrap();
+        std::fs::write(ast_path, format!("{:#?}\n{:#?}", sr, fns)).unwrap();
     }
 
     if let Some(output_file_path) = args.output {
-        create_executable(fns, &output_file_path);
+        create_executable(fns, sr, &output_file_path);
     }
 }
 
-fn create_executable(fns: Vec<frontend::tokens::FunctionDeclaration>, output: &str) {
-    let bytes = compiler::compile(fns).unwrap();
+fn create_executable(
+    fns: Vec<frontend::tokens::FunctionDeclaration>,
+    struct_registry: StructRegistry,
+    output: &str,
+) {
+    let bytes = compiler::compile(fns, struct_registry).unwrap();
     let object_file = "/tmp/main.o";
     std::fs::write(object_file, bytes).unwrap();
 

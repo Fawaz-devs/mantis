@@ -7,10 +7,13 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::libc::libc::link_libc_functions;
 
-use super::tokens::FunctionDeclaration;
+use super::tokens::{FunctionDeclaration, MsContext, StructRegistry};
 use anyhow::anyhow;
 
-pub fn compile(functions: Vec<FunctionDeclaration>) -> anyhow::Result<Vec<u8>> {
+pub fn compile(
+    functions: Vec<FunctionDeclaration>,
+    struct_registry: StructRegistry,
+) -> anyhow::Result<Vec<u8>> {
     let data_description = DataDescription::new();
     let mut flag_builder = settings::builder();
     flag_builder.set("is_pic", "true");
@@ -28,10 +31,12 @@ pub fn compile(functions: Vec<FunctionDeclaration>) -> anyhow::Result<Vec<u8>> {
     // let libc_fns = link_libc_functions(&mut module, &mut fbx, &mut ctx).unwrap();
     // println!("LIBC FNS: {:?}", libc_fns);
 
-    let mut offset = 0usize;
+    let mut ms_ctx = MsContext::new(0);
+    ms_ctx.set_struct_registry(struct_registry);
     for function in functions {
-        function.declare(&mut ctx, &mut fbx, &mut module, offset);
-        offset += 100;
+        function.declare(&mut ctx, &mut fbx, &mut module, &mut ms_ctx);
+        ms_ctx.clear_scopes();
+        ms_ctx.clear_variables();
     }
 
     let obj = module.finish();

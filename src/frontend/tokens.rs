@@ -2,7 +2,7 @@ use cranelift_module::FuncId;
 use std::{collections::BTreeMap, rc::Rc};
 
 use cranelift::{
-    codegen::ir::{condcodes, types, AbiParam, Type},
+    codegen::ir::{condcodes, stackslot::StackSize, types, AbiParam, StackSlot, Type},
     frontend::FunctionBuilder,
     prelude::*,
 };
@@ -133,6 +133,18 @@ pub enum MantisLexerTokens {
 
     #[token("as")]
     As,
+
+    #[token("if")]
+    If,
+
+    #[token("else")]
+    Else,
+
+    #[token("elif")]
+    ElseIf,
+
+    #[token("struct")]
+    Struct,
 }
 
 #[derive(Clone, Debug)]
@@ -145,16 +157,131 @@ pub enum Token {
     ConstLiteral(ConstLiteral),
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct CustomType {
-    name: String,
-    fields: BTreeMap<String, VariableType>,
+#[derive(Debug)]
+pub struct StructFieldValue {
+    offset: usize,
+    ty: VariableType,
+}
+
+#[derive(Debug)]
+pub struct StructRegistry {
+    structs: BTreeMap<String, StructMapBuilder>,
+}
+
+impl StructRegistry {
+    pub fn new() -> Self {
+        Self {
+            structs: BTreeMap::new(),
+        }
+    }
+
+    pub fn add_struct(&mut self, name: String, s: StructMapBuilder) {
+        assert!(self.structs.insert(name, s).is_none());
+    }
+
+    pub fn get_struct(&self, name: &str) -> Option<&StructMapBuilder> {
+        self.structs.get(name)
+    }
+}
+
+#[derive(Debug)]
+pub struct StructMapBuilder {
+    fields: BTreeMap<String, StructFieldValue>,
+    size: usize,
+}
+
+impl StructMapBuilder {
+    pub fn new() -> Self {
+        Self {
+            fields: BTreeMap::new(),
+            size: 0,
+        }
+    }
+
+    pub fn add_field(&mut self, field_name: &str, ty: VariableType, registry: &StructRegistry) {
+        assert!(!self.fields.contains_key(field_name));
+        if let VariableType::BuiltIn(t) = ty {
+            let size = t.size();
+            let align = size;
+
+            if self.size % align != 0 {
+                self.size += align - (self.size % align);
+            }
+
+            self.fields.insert(
+                field_name.to_string(),
+                StructFieldValue {
+                    offset: self.size,
+                    ty,
+                },
+            );
+
+            self.size += size;
+        } else if let VariableType::Custom(struct_name) = &ty {
+            let s = registry
+                .get_struct(&struct_name)
+                .expect("Undeclared struct");
+
+            let size = s.size();
+            let align = s.align();
+
+            if self.size % align != 0 {
+                self.size += align - (self.size % align);
+            }
+
+            self.fields.insert(
+                field_name.to_string(),
+                StructFieldValue {
+                    offset: self.size,
+                    ty,
+                },
+            );
+
+            self.size += size;
+        }
+    }
+
+    pub const fn size(&self) -> usize {
+        self.size
+    }
+
+    pub const fn align(&self) -> usize {
+        if self.size % 8 == 0 {
+            self.size
+        } else {
+            self.size + (8 - self.size % 8)
+        }
+    }
+
+    pub fn field_offset(&self, field_name: &str) -> Option<&StructFieldValue> {
+        self.fields.get(field_name)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StructMap {
+    fields: Vec<(String, VariableType)>,
+}
+
+impl StructMap {
+    pub fn new() -> Self {
+        Self { fields: Vec::new() }
+    }
+
+    pub fn add_field(&mut self, k: &str, t: VariableType) {
+        assert!(!self.fields.iter().any(|(x, _)| x == k));
+        self.fields.push((k.to_string(), t));
+    }
+
+    pub fn field_offset(&self, k: &str) -> usize {
+        0
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum VariableType {
     Native(Type),
-    Custom(Rc<CustomType>),
+    Custom(String),
     BuiltIn(BuiltInType),
     Constant(ConstantType),
 }
@@ -162,7 +289,7 @@ pub enum VariableType {
 #[derive(Clone, Debug)]
 pub enum ConstantType {
     BuiltIn(BuiltInType),
-    Custom(Rc<CustomType>),
+    Custom(String),
     // Native(Type),
 }
 
@@ -204,7 +331,7 @@ impl BuiltInType {
         })
     }
 
-    pub fn size(&self) -> isize {
+    pub fn size(&self) -> usize {
         match self {
             BuiltInType::Bool | BuiltInType::I8 | BuiltInType::U8 => 1,
             BuiltInType::I16 | BuiltInType::U16 => 2,
@@ -239,7 +366,7 @@ impl BuiltInType {
         }
     }
 
-    fn from_str(i: &MantisLexerTokens) -> Result<Self, ()> {
+    pub fn from_str(i: &MantisLexerTokens) -> Result<Self, ()> {
         if let MantisLexerTokens::Word(value) = i {
             let t = match value.as_str() {
                 "i8" => BuiltInType::I8,
@@ -355,25 +482,47 @@ impl MsVariable {
 pub struct ConstLiteral(MsVariable);
 
 #[derive(Clone, Debug)]
+pub enum ScopeType {
+    If(Node),
+    ElseIf(Node),
+    Else,
+    Loop,
+    Empty,
+}
+
+#[derive(Clone, Debug)]
 pub enum Expression {
     Assign(MsVariable, Node),
     ConstLiteral(MsVariable, String), // MsVariable and Value
     Declare(MsVariable, Node),
-    Call(MsVariable, Vec<Node>),
-    Cast(MsVariable, MsVariable),
     Operation(Node),
     Return(Node),
     Nil,
+    Scope(ScopeType, Vec<Expression>),
+    Break,
+    Continue,
 }
 
+#[derive(Debug)]
 pub struct CraneliftVariable {
     pub var: Variable,
     pub ms_var: MsVariable,
 }
 
+pub struct MsScope {
+    block: Block,
+}
+impl MsScope {
+    fn new(block: Block) -> MsScope {
+        Self { block }
+    }
+}
+
 pub struct MsContext {
     local_variables: BTreeMap<String, CraneliftVariable>,
     variable_index: usize,
+    named_scopes: BTreeMap<String, MsScope>,
+    struct_registry: StructRegistry,
 }
 
 impl MsContext {
@@ -381,12 +530,26 @@ impl MsContext {
         Self {
             local_variables: BTreeMap::new(),
             variable_index: offset,
+            named_scopes: BTreeMap::new(),
+            struct_registry: StructRegistry::new(),
         }
     }
 
     pub fn new_variable(&mut self) -> Variable {
         self.variable_index += 1;
         Variable::new(self.variable_index)
+    }
+
+    pub fn clear_scopes(&mut self) {
+        self.named_scopes.clear();
+    }
+
+    pub fn clear_variables(&mut self) {
+        self.local_variables.clear();
+    }
+
+    pub fn set_struct_registry(&mut self, registry: StructRegistry) {
+        self.struct_registry = registry;
     }
 }
 
@@ -424,30 +587,193 @@ impl Expression {
                                 ms_var: var.clone(),
                             },
                         );
+                    } else if let VariableType::BuiltIn(t) = var.var_type {
+                        let variable = ms_ctx.new_variable();
+                        fbx.declare_var(variable, t.to_cranelift_type().unwrap());
+                        fbx.def_var(variable, value.value);
+                        if let Some(svalue) = ms_ctx.struct_registry.get_struct(&var.name) {
+                            ms_ctx.local_variables.insert(
+                                var.name.clone(),
+                                CraneliftVariable {
+                                    var: variable,
+                                    ms_var: MsVariable {
+                                        name: var.name.clone(),
+                                        var_type: VariableType::Custom(var.name.clone()),
+                                    },
+                                },
+                            );
+                        } else {
+                            ms_ctx.local_variables.insert(
+                                var.name.clone(),
+                                CraneliftVariable {
+                                    var: variable,
+                                    ms_var: var.clone(),
+                                },
+                            );
+                        }
                     } else {
                         panic!("Unsupported type {:?}, {:?}", var, val);
                     }
                 }
             }
-            Expression::Call(var, args) => {
-                todo!();
-            }
-            Expression::Cast(_, _) => todo!(),
             Expression::Operation(val) => {
                 val.translate(ms_ctx, fbx, module);
             }
             Expression::Return(val) => {
                 if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
                     let mut value = val.translate(ms_ctx, fbx, module).value;
-                    // if return_type.value_type == types::I32 {
-                    //     value = fbx.ins().ireduce(return_type.value_type, value);
-                    // }
                     fbx.ins().return_(&[value]);
                 } else {
                     panic!("Function doesn't support return type");
                 }
             }
             Expression::Nil => {}
+            Expression::Scope(scope_type, expressions) => match scope_type {
+                ScopeType::If(node) => {
+                    let iftrue_block = fbx.create_block();
+                    let else_block = fbx.create_block();
+                    let merge_block = fbx.create_block();
+                    let val = node.translate(ms_ctx, fbx, module);
+                    let scope_index = ms_ctx.named_scopes.len();
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("else-{scope_index}"), MsScope::new(else_block));
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("exit-if-{scope_index}"), MsScope::new(merge_block));
+
+                    fbx.ins()
+                        .brif(val.value, iftrue_block, &[], else_block, &[]);
+                    fbx.switch_to_block(iftrue_block);
+                    fbx.seal_block(iftrue_block);
+
+                    let mut jumped_already = false;
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+                }
+
+                ScopeType::ElseIf(node) => {
+                    let mut jumped_already = false;
+
+                    let (ek, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
+                    let else_block = block.block;
+
+                    let elseif_block = fbx.create_block();
+                    let nextelseif_block = fbx.create_block();
+                    ms_ctx
+                        .named_scopes
+                        .insert(ek.clone(), MsScope::new(nextelseif_block));
+                    fbx.switch_to_block(else_block);
+                    fbx.seal_block(else_block);
+
+                    let val = node.translate(ms_ctx, fbx, module);
+
+                    let (mk, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
+
+                    let merge_block = block.block;
+
+                    fbx.ins()
+                        .brif(val.value, elseif_block, &[], nextelseif_block, &[]);
+
+                    fbx.switch_to_block(elseif_block);
+                    fbx.seal_block(elseif_block);
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+                }
+                ScopeType::Else => {
+                    let mut jumped_already = false;
+
+                    let (ek, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
+                    let else_block = block.block;
+
+                    ms_ctx.named_scopes.remove(&ek.clone());
+                    fbx.switch_to_block(else_block);
+                    fbx.seal_block(else_block);
+
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    let (mk, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
+
+                    let merge_block = block.block;
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+
+                    ms_ctx.named_scopes.remove(&mk.clone());
+                    fbx.switch_to_block(merge_block);
+                    fbx.seal_block(merge_block);
+                }
+                ScopeType::Loop => {
+                    let loop_block = fbx.create_block();
+                    let exit_block = fbx.create_block();
+                    let scopes_index = ms_ctx.named_scopes.len();
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("loop-{}", scopes_index), MsScope::new(loop_block));
+                    ms_ctx.named_scopes.insert(
+                        format!("exit-loop-{}", scopes_index),
+                        MsScope::new(exit_block),
+                    );
+
+                    fbx.ins().jump(loop_block, &[]);
+                    fbx.switch_to_block(loop_block);
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+                    }
+                    fbx.seal_block(loop_block);
+
+                    fbx.ins().jump(exit_block, &[]);
+                    fbx.switch_to_block(exit_block);
+                    fbx.seal_block(exit_block);
+                }
+
+                ScopeType::Empty => todo!(),
+            },
+            Expression::Break => {
+                let (_, exit_block) =
+                    find_last_key_starts_with(&ms_ctx.named_scopes, "exit-loop").unwrap();
+                fbx.ins().jump(exit_block.block, &[]);
+            }
+            Expression::Continue => {
+                let (_, loop_block) =
+                    find_last_key_starts_with(&ms_ctx.named_scopes, "loop-").unwrap();
+                fbx.ins().jump(loop_block.block, &[]);
+            }
         }
         None
     }
@@ -467,14 +793,16 @@ impl FunctionDeclaration {
         ctx: &mut cranelift::prelude::codegen::Context,
         fbx: &mut cranelift::prelude::FunctionBuilderContext,
         module: &mut ObjectModule,
-        offset: usize,
+        ms_ctx: &mut MsContext,
     ) -> FuncId {
         ctx.func.signature.returns.clear();
         ctx.func.signature.params = self
             .arguments
             .iter()
             .map(|x| {
-                if let VariableType::Native(t) = x.var_type {
+                if let VariableType::BuiltIn(vtype) = x.var_type {
+                    AbiParam::new(vtype.to_cranelift_type().unwrap())
+                } else if let VariableType::Native(t) = x.var_type {
                     AbiParam::new(t)
                 } else {
                     panic!("Unsupported custom struct");
@@ -483,6 +811,11 @@ impl FunctionDeclaration {
             .collect();
         if let Some(VariableType::Native(return_type)) = self.return_type {
             ctx.func.signature.returns.push(AbiParam::new(return_type));
+        } else if let Some(VariableType::BuiltIn(return_type)) = self.return_type {
+            ctx.func
+                .signature
+                .returns
+                .push(AbiParam::new(return_type.to_cranelift_type().unwrap()));
         }
 
         if let Some(expressions) = &self.body {
@@ -492,7 +825,6 @@ impl FunctionDeclaration {
 
             builder.append_block_params_for_function_params(entry_block);
             builder.switch_to_block(entry_block);
-            let mut ms_ctx = MsContext::new(offset);
 
             let values = builder.block_params(entry_block).to_vec();
             for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
@@ -508,12 +840,23 @@ impl FunctionDeclaration {
                             ms_var: variable.clone(),
                         },
                     );
+                } else if let VariableType::BuiltIn(t) = variable.var_type {
+                    let t = t.to_cranelift_type().unwrap();
+                    builder.try_declare_var(var, t).unwrap();
+                    builder.try_def_var(var, value).unwrap();
+                    ms_ctx.local_variables.insert(
+                        variable.name.clone(),
+                        CraneliftVariable {
+                            var,
+                            ms_var: variable.clone(),
+                        },
+                    );
                 } else {
                     log::error!("Unsupported variable type {:?}", variable);
                 }
             }
             for expression in expressions {
-                expression.translate(&mut ms_ctx, &mut builder, module);
+                expression.translate(ms_ctx, &mut builder, module);
             }
             builder.seal_all_blocks();
             builder.finalize();
@@ -565,6 +908,8 @@ pub enum Operator {
     LessThan,
 
     Call,
+
+    StructAccess,
 }
 
 impl Operator {
@@ -579,6 +924,7 @@ impl Operator {
             MantisLexerTokens::NotEqualTo => Self::NotEqualTo,
             MantisLexerTokens::GreaterThan => Self::GreaterThan,
             MantisLexerTokens::LessThan => Self::LessThan,
+            MantisLexerTokens::Dot => Self::StructAccess,
 
             _ => return Err(()),
         })
@@ -608,7 +954,11 @@ impl Node {
     pub fn parse(tokens: &[MantisLexerTokens]) -> Result<Self, ()> {
         let mut node = None;
 
-        for i in 0..tokens.len() {
+        let mut i = 0;
+        loop {
+            if i >= tokens.len() {
+                break;
+            }
             let token = &tokens[i];
 
             match token {
@@ -616,7 +966,12 @@ impl Node {
                 | MantisLexerTokens::Sub
                 | MantisLexerTokens::Multiply
                 | MantisLexerTokens::Divide
-                | MantisLexerTokens::Assign => {
+                | MantisLexerTokens::Assign
+                | MantisLexerTokens::Dot
+                | MantisLexerTokens::GreaterThan
+                | MantisLexerTokens::LessThan
+                | MantisLexerTokens::EqualTo
+                | MantisLexerTokens::NotEqualTo => {
                     node = Some(Node::BinaryExpr {
                         op: Operator::try_from(token.clone())?,
                         lhs: Box::new(Self::parse(&tokens[0..i])?),
@@ -655,6 +1010,13 @@ impl Node {
                     )))
                 }
 
+                MantisLexerTokens::Float(value) => {
+                    node = Some(Node::Variable(MsVariable::new(
+                        value.to_string(),
+                        VariableType::Constant((ConstantType::BuiltIn(BuiltInType::F64))),
+                    )))
+                }
+
                 MantisLexerTokens::String(value) => {
                     node = Some(Node::Variable(MsVariable::new(
                         value.to_string(),
@@ -664,10 +1026,23 @@ impl Node {
 
                 MantisLexerTokens::BracketOpen => {
                     if let Some(Node::Variable(mut var)) = node.take() {
-                        var.var_type = VariableType::BuiltIn(BuiltInType::Function);
-                        let args = parse_fn_call_args(&tokens[i..]);
-                        node = Some(Node::FuncExpr { lhs: var, args });
-                        break;
+                        let slice = &tokens[i..];
+
+                        if let Some((end_of_function, _)) = slice
+                            .iter()
+                            .enumerate()
+                            .find(|(_, x)| **x == MantisLexerTokens::BracketClose)
+                        {
+                            var.var_type = VariableType::BuiltIn(BuiltInType::Function);
+                            let args_slice = &slice[0..end_of_function];
+                            let args = parse_fn_call_args(args_slice);
+                            node = Some(Node::FuncExpr { lhs: var, args });
+                            // break;
+                            // log::info!("Found a Func Expr {:?} {:?}", node, args_slice);
+                            i += end_of_function;
+                        } else {
+                            node = Some(Node::Variable(var));
+                        }
                     }
                 }
                 MantisLexerTokens::BracketClose => {
@@ -684,6 +1059,8 @@ impl Node {
                     return Err(());
                 }
             }
+
+            i += 1;
         }
 
         match node {
@@ -768,15 +1145,19 @@ impl Node {
                                 }
                                 _ => todo!(),
                             };
-
-                            // let val = fbx.ins().iconst(
-                            //     t.to_cranelift_type().unwrap(),
-                            //     var.name.parse::<i64>().unwrap(),
-                            // );
                             return MsValue::new(*t, val);
                         }
                     } else {
-                        panic!("Undeclared Variable {:?}", var);
+                        let s = ms_ctx
+                            .struct_registry
+                            .get_struct(&var.name)
+                            .expect(&format!("Undeclared variable or struct {:?}", var));
+
+                        let slot_data =
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, s.size() as u32);
+                        let slot = fbx.create_sized_stack_slot(slot_data);
+                        let val = fbx.ins().stack_addr(types::I64, slot, 0);
+                        return MsValue::new(BuiltInType::Pointer, val);
                     }
                 }
             }
@@ -890,6 +1271,41 @@ impl Node {
                     );
                 }
 
+                Operator::StructAccess => {
+                    if let (Node::Variable(svar), Node::Variable(field)) =
+                        (lhs.as_ref(), rhs.as_ref())
+                    {
+                        let s = ms_ctx
+                            .local_variables
+                            .get(&svar.name)
+                            .expect("Undeclared variable");
+                        let VariableType::Custom(var_type) = &s.ms_var.var_type else {
+                            panic!("Not a custom struct {:?}", s);
+                        };
+                        let ptr = fbx.use_var(s.var);
+                        let smap = ms_ctx
+                            .struct_registry
+                            .get_struct(&var_type)
+                            .expect("Undeclared struct");
+
+                        let value = smap
+                            .field_offset(&field.name)
+                            .expect("Field not defined on struct");
+
+                        let VariableType::BuiltIn(ty) = value.ty else {
+                            panic!("Not builtin type of struct field");
+                        };
+                        let val = fbx.ins().load(
+                            ty.to_cranelift_type().unwrap(),
+                            MemFlags::trusted(),
+                            ptr,
+                            value.offset as i32,
+                        );
+
+                        return MsValue::new(ty, val);
+                    }
+                }
+
                 _ => todo!(),
             },
             Node::CastExpr { lhs, cast_to } => {
@@ -918,21 +1334,27 @@ impl Node {
                                 panic!("Unhandled case");
                             }
                         } else if value.var_type.is_signed_int() {
-                            return MsValue::new(
-                                *cast_to,
-                                fbx.ins().fcvt_from_sint(
-                                    cast_to.to_cranelift_type().unwrap(),
-                                    value.value,
-                                ),
-                            );
-                        } else if value.var_type.is_unsigned_int() {
-                            return MsValue::new(
-                                *cast_to,
-                                fbx.ins().fcvt_from_uint(
-                                    cast_to.to_cranelift_type().unwrap(),
-                                    value.value,
-                                ),
-                            );
+                            if cast_to.is_float() {
+                                log::info!("{:?}", self);
+
+                                return MsValue::new(
+                                    *cast_to,
+                                    fbx.ins().fcvt_from_sint(
+                                        cast_to.to_cranelift_type().unwrap(),
+                                        value.value,
+                                    ),
+                                );
+                            } else if value.var_type.is_unsigned_int() {
+                                return MsValue::new(
+                                    *cast_to,
+                                    fbx.ins().fcvt_from_uint(
+                                        cast_to.to_cranelift_type().unwrap(),
+                                        value.value,
+                                    ),
+                                );
+                            } else {
+                                return MsValue::new(*cast_to, value.value);
+                            }
                         }
                     } else if diff > 0 {
                         if cast_to.is_signed_int() && value.var_type.is_signed_int() {
@@ -963,4 +1385,19 @@ impl Node {
     }
 }
 
-pub fn cast_instruction(cast_from: BuiltInType, value: Value, cast_to: BuiltInType) {}
+pub fn find_last_key_starts_with<'a, T>(
+    map: &'a BTreeMap<String, T>,
+    prefix: &str,
+) -> Option<(&'a String, &'a T)> {
+    let mut pair = None;
+
+    for (k, v) in map.range(prefix.to_string()..) {
+        if !k.starts_with(prefix) {
+            break;
+        }
+
+        pair = Some((k, v))
+    }
+
+    return pair;
+}
