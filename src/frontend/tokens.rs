@@ -525,6 +525,21 @@ pub struct MsContext {
     struct_registry: StructRegistry,
 }
 
+pub struct FunctionSignature {
+    args: Vec<VariableType>,
+    return_values: Vec<VariableType>,
+}
+
+pub struct FunctionRegistry {
+    functions: BTreeMap<String, FunctionSignature>,
+}
+
+pub struct MsTypeContext {
+    local_variables: BTreeMap<String, VariableType>,
+    struct_registry: StructRegistry,
+    function_registry: FunctionRegistry,
+}
+
 impl MsContext {
     pub fn new(offset: usize) -> Self {
         Self {
@@ -1311,7 +1326,7 @@ impl Node {
             Node::CastExpr { lhs, cast_to } => {
                 if let Some(t) = cast_to.to_cranelift_type() {
                     let value = lhs.translate(ms_ctx, fbx, module);
-                    let diff = cast_to.size() - value.var_type.size();
+                    let diff = cast_to.size() as isize - value.var_type.size() as isize;
                     if diff == 0 {
                         if value.var_type.is_float() {
                             if cast_to.is_unsigned_int() {
@@ -1383,6 +1398,8 @@ impl Node {
 
         todo!()
     }
+
+    pub fn get_value_type(&self) {}
 }
 
 pub fn find_last_key_starts_with<'a, T>(

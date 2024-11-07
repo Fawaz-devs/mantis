@@ -9,7 +9,7 @@ fn extern puts(ptr: i64) i32;
 // fn extern free(ptr: i64);
 fn extern rand() i32;
 fn extern srand(i32) i32;
-fn extern time(i64) i32;
+fn extern time(i32) i32;
 
 
 // struct Foo {
@@ -26,11 +26,10 @@ fn foo(b: i64) i64 {
 
 
 fn main(argc: i32, argv: i64) i32 {
-	srand(time(0));
 	let a = 2;
 	let b = a + 1;
 	b = b * 2;
-	b = foo(b);
+	b = time(0) as i64;
 
 	let i = 0;
 	loop {
@@ -53,5 +52,5 @@ fn main(argc: i32, argv: i64) i32 {
 
 	// let f = Foo { a: 10, b: 20, c: 30 };
 
-	return b as i32; 
+	return time(0); 
 }
