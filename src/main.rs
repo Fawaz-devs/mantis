@@ -27,6 +27,8 @@ mod backend;
 mod frontend;
 mod lexer;
 mod libc;
+pub mod registries;
+pub mod scope;
 mod utils;
 
 #[derive(clap::Parser, Debug)]

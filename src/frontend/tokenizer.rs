@@ -1,11 +1,10 @@
 use cranelift::codegen::ir::{types, Type};
 use logos::{Lexer, Logos};
-
-use crate::frontend::tokens::MantisLexerTokens;
+use mantis_tokens::MantisLexerTokens;
 
 use super::tokens::{
-    BuiltInType, ConstLiteral, Expression, FunctionDeclaration, Keyword, MsVariable, Node,
-    StructMapBuilder, StructRegistry, Token, VariableType,
+    BuiltInType, ConstLiteral, Expression, FunctionDeclaration, MsVariable, Node, StructMapBuilder,
+    StructRegistry, Token, VariableType,
 };
 
 pub fn collect_to_tokens(input: &str) {
@@ -44,19 +43,6 @@ pub fn read_to_tokens(input: String) -> (Vec<FunctionDeclaration>, StructRegistr
     return (functions, struct_registry);
 }
 
-// pub fn map_type_to_native(val: &str) -> Option<VariableType> {
-//     let t = match val {
-//         "i32" => VariableType::Native(types::I32),
-//         "i64" => VariableType::Native(types::I64),
-//         "f64" => VariableType::Native(types::F64),
-//         "f32" => VariableType::Native(types::F32),
-//         _ => {
-//             return None;
-//         }
-//     };
-//     Some(t)
-// }
-
 pub fn parse_fn_declaration(
     lexer: &mut Lexer<'_, MantisLexerTokens>,
     struct_registry: &StructRegistry,
@@ -75,9 +61,6 @@ pub fn parse_fn_declaration(
                     return_type = Some(VariableType::BuiltIn(
                         BuiltInType::from_str(&MantisLexerTokens::Word(value)).unwrap(),
                     ))
-                    // return_type = Some(
-                    //     map_type_to_native(&value).expect(&format!("Invalid Return Type {value}")),
-                    // );
                 }
             }
             Ok(MantisLexerTokens::BracketOpen) => {
