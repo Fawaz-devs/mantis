@@ -2,10 +2,9 @@ type File = void;
 
 extern "C" File* stdout, stdin, stderr;
 
-extern "C" fn fwrite(start: char*, chunk_size: i64, number_of_chunks: i64, file: File*);
-extern "C" fn fflush(file: File*) : i32;
-
-extern "C" fn strlen(s: char*) : isize;
+fn extern fwrite(start: char*, chunk_size: i64, number_of_chunks: i64, file: File*);
+fn extern fflush(file: File*) : i32;
+fn extern strlen(s: char*) : isize;
 
 
 fn print(s: char*) {

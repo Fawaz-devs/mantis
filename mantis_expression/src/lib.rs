@@ -33,9 +33,11 @@ fn test_ast_parsing() {
     panic!();
 }
 
-pub fn parse_expression(tokens: &[MantisLexerTokens]) -> anyhow::Result<Node> {
-    let (node, _) = parse(tokens)?;
-    Ok(node)
+impl Node {
+    pub fn parse_expression(tokens: &[MantisLexerTokens]) -> anyhow::Result<Self> {
+        let (node, _) = parse(tokens)?;
+        Ok(node)
+    }
 }
 
 fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {

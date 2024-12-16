@@ -32,6 +32,12 @@ pub enum MantisLexerTokens {
     #[token("}")]
     BraceClose,
 
+    #[token("[")]
+    SqBracketOpen,
+
+    #[token("]")]
+    SqBracketClose,
+
     #[token("(")]
     BracketOpen,
 
@@ -131,4 +137,7 @@ pub enum MantisLexerTokens {
 
     #[token("match")]
     Match,
+
+    #[token("type")]
+    TypeDecl,
 }

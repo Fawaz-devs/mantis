@@ -10,11 +10,22 @@ use cranelift_module::{DataDescription, FuncOrDataId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use logos::Logos;
 
-use crate::libc::libc::declare_external_function;
+use crate::{
+    libc::libc::declare_external_function,
+    registries::{
+        functions::FunctionType,
+        types::{MsType, MsTypeRegistry},
+        variable::{MsVal, MsVar, MsVarRegistry},
+        MsRegistry,
+    },
+    scope::MsScopes,
+};
 
 use super::tokenizer::parse_fn_call_args;
 
 use mantis_tokens::MantisLexerTokens;
+
+pub type MsNode = mantis_expression::node::Node;
 
 #[derive(Clone, Debug)]
 pub enum Token {
@@ -67,7 +78,7 @@ impl StructMapBuilder {
         }
     }
 
-    pub fn add_field(&mut self, field_name: &str, ty: VariableType, registry: &StructRegistry) {
+    pub fn add_field(&mut self, field_name: &str, ty: VariableType, registry: &MsTypeRegistry) {
         assert!(!self.fields.contains_key(field_name));
         if let VariableType::BuiltIn(t) = ty {
             let size = t.size();
@@ -87,9 +98,14 @@ impl StructMapBuilder {
 
             self.size += size;
         } else if let VariableType::Custom(struct_name) = &ty {
+            // let s = registry
+            //     .get_struct(&struct_name)
+            //     .expect("Undeclared struct");
+
             let s = registry
-                .get_struct(&struct_name)
-                .expect("Undeclared struct");
+                .get_registry()
+                .get(struct_name.as_str())
+                .expect("undeclared type");
 
             let size = s.size();
             let align = s.align();
@@ -305,6 +321,12 @@ pub struct MsVariable {
     pub var_type: VariableType,
 }
 
+#[derive(Clone, Debug)]
+pub struct MsTypedVariable {
+    pub name: String,
+    pub var_type: MsType,
+}
+
 pub struct MsValue {
     pub var_type: BuiltInType,
     pub value: Value,
@@ -372,6 +394,256 @@ pub enum Expression {
     Continue,
 }
 
+#[derive(Clone, Debug)]
+pub enum MsExpression {
+    Declare(String, MsType),
+    Operation(MsNode),
+    Return(MsNode),
+    Break,
+    Continue,
+    Scope(ScopeType, Vec<MsExpression>),
+}
+impl MsExpression {
+    fn translate(
+        &self,
+        ms_ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder<'_>,
+        module: &mut ObjectModule,
+    ) -> Option<()> {
+        match self {
+            MsExpression::Declare(var_name, ty) => {
+                let var = ms_ctx.new_variable();
+                fbx.declare_var(var, ty.to_cl_type().expect("Type can't be null"));
+                ms_ctx
+                    .scopes
+                    .last_scope_mut()
+                    .get_registry_mut()
+                    .insert(var_name.clone(), MsVar::new(ty.clone(), var));
+            }
+            MsExpression::Operation(node) => translate_node(&node, ms_ctx, fbx, module),
+            MsExpression::Return(ret) => {
+                if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
+                    let mut value = translate_node(&ret, ms_ctx, fbx, module).value;
+                    fbx.ins().return_(&[value]);
+                } else {
+                    panic!("Function doesn't support return type");
+                }
+            }
+            MsExpression::Break => {}
+            MsExpression::Continue => {}
+            MsExpression::Scope(sc_ty, expressions) => {}
+        };
+        match self {
+            Expression::ConstLiteral(_, _) => todo!(),
+            Expression::Declare(var, val) => {
+                let value = val.translate(ms_ctx, fbx, module);
+                if let Some(variable) = ms_ctx.local_variables.get(&var.name) {
+                    fbx.def_var(variable.var.clone(), value.value);
+                } else {
+                    if let VariableType::Native(t) = var.var_type {
+                        let variable = ms_ctx.new_variable();
+                        fbx.declare_var(variable, t);
+                        // let value = val.translate(ms_ctx, fbx, module);
+                        fbx.def_var(variable, value.value);
+                        ms_ctx.local_variables.insert(
+                            var.name.clone(),
+                            CraneliftVariable {
+                                var: variable,
+                                ms_var: var.clone(),
+                            },
+                        );
+                    } else if let VariableType::BuiltIn(t) = var.var_type {
+                        let variable = ms_ctx.new_variable();
+                        fbx.declare_var(variable, t.to_cranelift_type().unwrap());
+                        fbx.def_var(variable, value.value);
+                        if let Some(svalue) = ms_ctx.struct_registry.get_struct(&var.name) {
+                            ms_ctx.local_variables.insert(
+                                var.name.clone(),
+                                CraneliftVariable {
+                                    var: variable,
+                                    ms_var: MsVariable {
+                                        name: var.name.clone(),
+                                        var_type: VariableType::Custom(var.name.clone()),
+                                    },
+                                },
+                            );
+                        } else {
+                            ms_ctx.local_variables.insert(
+                                var.name.clone(),
+                                CraneliftVariable {
+                                    var: variable,
+                                    ms_var: var.clone(),
+                                },
+                            );
+                        }
+                    } else {
+                        panic!("Unsupported type {:?}, {:?}", var, val);
+                    }
+                }
+            }
+            Expression::Operation(val) => {
+                val.translate(ms_ctx, fbx, module);
+            }
+            Expression::Return(val) => {
+                if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
+                    let mut value = val.translate(ms_ctx, fbx, module).value;
+                    fbx.ins().return_(&[value]);
+                } else {
+                    panic!("Function doesn't support return type");
+                }
+            }
+            Expression::Nil => {}
+            Expression::Scope(scope_type, expressions) => match scope_type {
+                ScopeType::If(node) => {
+                    let iftrue_block = fbx.create_block();
+                    let else_block = fbx.create_block();
+                    let merge_block = fbx.create_block();
+                    let val = node.translate(ms_ctx, fbx, module);
+                    let scope_index = ms_ctx.named_scopes.len();
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("else-{scope_index}"), MsScope::new(else_block));
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("exit-if-{scope_index}"), MsScope::new(merge_block));
+
+                    fbx.ins()
+                        .brif(val.value, iftrue_block, &[], else_block, &[]);
+                    fbx.switch_to_block(iftrue_block);
+                    fbx.seal_block(iftrue_block);
+
+                    let mut jumped_already = false;
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+                }
+
+                ScopeType::ElseIf(node) => {
+                    let mut jumped_already = false;
+
+                    let (ek, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
+                    let else_block = block.block;
+
+                    let elseif_block = fbx.create_block();
+                    let nextelseif_block = fbx.create_block();
+                    ms_ctx
+                        .named_scopes
+                        .insert(ek.clone(), MsScope::new(nextelseif_block));
+                    fbx.switch_to_block(else_block);
+                    fbx.seal_block(else_block);
+
+                    let val = node.translate(ms_ctx, fbx, module);
+
+                    let (mk, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
+
+                    let merge_block = block.block;
+
+                    fbx.ins()
+                        .brif(val.value, elseif_block, &[], nextelseif_block, &[]);
+
+                    fbx.switch_to_block(elseif_block);
+                    fbx.seal_block(elseif_block);
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+                }
+                ScopeType::Else => {
+                    let mut jumped_already = false;
+
+                    let (ek, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
+                    let else_block = block.block;
+
+                    ms_ctx.named_scopes.remove(&ek.clone());
+                    fbx.switch_to_block(else_block);
+                    fbx.seal_block(else_block);
+
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+
+                        match expr {
+                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                                jumped_already = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    let (mk, block) =
+                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
+
+                    let merge_block = block.block;
+                    if !jumped_already {
+                        fbx.ins().jump(merge_block, &[]);
+                    }
+
+                    ms_ctx.named_scopes.remove(&mk.clone());
+                    fbx.switch_to_block(merge_block);
+                    fbx.seal_block(merge_block);
+                }
+                ScopeType::Loop => {
+                    let loop_block = fbx.create_block();
+                    let exit_block = fbx.create_block();
+                    let scopes_index = ms_ctx.named_scopes.len();
+                    ms_ctx
+                        .named_scopes
+                        .insert(format!("loop-{}", scopes_index), MsScope::new(loop_block));
+                    ms_ctx.named_scopes.insert(
+                        format!("exit-loop-{}", scopes_index),
+                        MsScope::new(exit_block),
+                    );
+
+                    fbx.ins().jump(loop_block, &[]);
+                    fbx.switch_to_block(loop_block);
+                    for expr in expressions {
+                        expr.translate(ms_ctx, fbx, module);
+                    }
+                    fbx.seal_block(loop_block);
+
+                    fbx.ins().jump(exit_block, &[]);
+                    fbx.switch_to_block(exit_block);
+                    fbx.seal_block(exit_block);
+                }
+
+                ScopeType::Empty => todo!(),
+            },
+            Expression::Break => {
+                let (_, exit_block) =
+                    find_last_key_starts_with(&ms_ctx.named_scopes, "exit-loop").unwrap();
+                fbx.ins().jump(exit_block.block, &[]);
+            }
+            Expression::Continue => {
+                let (_, loop_block) =
+                    find_last_key_starts_with(&ms_ctx.named_scopes, "loop-").unwrap();
+                fbx.ins().jump(loop_block.block, &[]);
+            }
+        }
+        None
+    }
+}
+
 #[derive(Debug)]
 pub struct CraneliftVariable {
     pub var: Variable,
@@ -392,6 +664,7 @@ pub struct MsContext {
     variable_index: usize,
     named_scopes: BTreeMap<String, MsScope>,
     struct_registry: StructRegistry,
+    scopes: MsScopes<MsVarRegistry>,
 }
 
 pub struct FunctionSignature {
@@ -416,6 +689,7 @@ impl MsContext {
             variable_index: offset,
             named_scopes: BTreeMap::new(),
             struct_registry: StructRegistry::new(),
+            scopes: MsScopes::default(),
         }
     }
 
@@ -671,6 +945,168 @@ pub struct FunctionDeclaration {
     pub body: Option<Vec<Expression>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct MsFunctionDeclaration {
+    pub name: String,
+    pub return_type: MsType,
+    pub arguments: Vec<MsTypedVariable>,
+    pub body: Vec<MsExpression>,
+    pub fn_type: FunctionType,
+}
+
+impl MsFunctionDeclaration {
+    pub(crate) fn declare(
+        &self,
+        ctx: &mut cranelift::prelude::codegen::Context,
+        fbx: &mut cranelift::prelude::FunctionBuilderContext,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) -> FuncId {
+        ctx.func.signature.returns.clear();
+        ctx.func.signature.params.clear();
+        ctx.func.signature.params = self
+            .arguments
+            .iter()
+            .map(|x| {
+                x.var_type
+                    .to_abi_param()
+                    .expect("Function Arguments can't be void")
+            })
+            .collect();
+
+        if let Some(var_ty) = self.return_type.to_abi_param() {
+            ctx.func.signature.returns.push(var_ty);
+        }
+
+        if self.body.is_empty() {
+            let func_id = declare_external_function(
+                &self.name,
+                &format!("ext_{}", self.name),
+                // &self.name,
+                ctx.func.signature.clone(),
+                module,
+                fbx,
+                ctx,
+            )
+            .unwrap();
+
+            return func_id;
+        }
+
+        let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
+
+        let entry_block = builder.create_block();
+
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
+
+        let values = builder.block_params(entry_block).to_vec();
+        for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
+            let var = ms_ctx.new_variable();
+            // variables.insert(variable.name.clone(), value);
+            let ty = variable.var_type.to_cl_type().expect("type can't be void");
+            // ms_ctx.scopes.get_last_mut(|registry| {
+            //     registry
+            //         .get_registry_mut()
+            //         .insert(variable.name, variable.var_type);
+            // });
+
+            let ms_var = MsVar::new(variable.var_type.clone(), var);
+
+            ms_ctx
+                .scopes
+                .last_scope_mut()
+                .get_registry_mut()
+                .insert(variable.name.clone(), ms_var);
+
+            builder.try_declare_var(var, ty).unwrap();
+        }
+        for expression in self.body {
+            expression.translate(ms_ctx, &mut builder, module);
+        }
+        builder.seal_all_blocks();
+        builder.finalize();
+
+        let func_id = module
+            .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
+            .unwrap();
+
+        log::info!("Function Declared {} {}", self.name, func_id);
+
+        module.define_function(func_id, ctx);
+        module.clear_context(ctx);
+
+        return func_id;
+
+        // if let Some(expressions) = &self.body {
+        //     let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
+
+        //     let entry_block = builder.create_block();
+
+        //     builder.append_block_params_for_function_params(entry_block);
+        //     builder.switch_to_block(entry_block);
+
+        //     let values = builder.block_params(entry_block).to_vec();
+        //     for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
+        //         let var = ms_ctx.new_variable();
+        //         // variables.insert(variable.name.clone(), value);
+        //         if let VariableType::Native(t) = variable.var_type {
+        //             builder.try_declare_var(var, t).unwrap();
+        //             builder.try_def_var(var, value).unwrap();
+        //             ms_ctx.local_variables.insert(
+        //                 variable.name.clone(),
+        //                 CraneliftVariable {
+        //                     var,
+        //                     ms_var: variable.clone(),
+        //                 },
+        //             );
+        //         } else if let VariableType::BuiltIn(t) = variable.var_type {
+        //             let t = t.to_cranelift_type().unwrap();
+        //             builder.try_declare_var(var, t).unwrap();
+        //             builder.try_def_var(var, value).unwrap();
+        //             ms_ctx.local_variables.insert(
+        //                 variable.name.clone(),
+        //                 CraneliftVariable {
+        //                     var,
+        //                     ms_var: variable.clone(),
+        //                 },
+        //             );
+        //         } else {
+        //             log::error!("Unsupported variable type {:?}", variable);
+        //         }
+        //     }
+        //     for expression in expressions {
+        //         expression.translate(ms_ctx, &mut builder, module);
+        //     }
+        //     builder.seal_all_blocks();
+        //     builder.finalize();
+
+        //     let func_id = module
+        //         .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
+        //         .unwrap();
+
+        //     log::info!("Function Declared {} {}", self.name, func_id);
+
+        //     module.define_function(func_id, ctx);
+        //     module.clear_context(ctx);
+
+        //     return func_id;
+        // } else {
+        //     let func_id = declare_external_function(
+        //         &self.name,
+        //         &format!("ext_{}", self.name),
+        //         // &self.name,
+        //         ctx.func.signature.clone(),
+        //         module,
+        //         fbx,
+        //         ctx,
+        //     )
+        //     .unwrap();
+
+        //     return func_id;
+        // }
+    }
+}
 impl FunctionDeclaration {
     pub(crate) fn declare(
         &self,
@@ -1286,4 +1722,14 @@ pub fn find_last_key_starts_with<'a, T>(
     }
 
     return pair;
+}
+
+pub fn translate_node(
+    node: &MsNode,
+
+    ms_ctx: &mut MsContext,
+    fbx: &mut FunctionBuilder<'_>,
+    module: &mut ObjectModule,
+) -> MsVal {
+    todo!()
 }
