@@ -17,38 +17,38 @@ use cranelift::{
 use cranelift_module::{default_libcall_names, DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-pub fn link_libc_functions(
-    module: &mut ObjectModule,
-    fbx: &mut FunctionBuilderContext,
-    ctx: &mut cranelift::prelude::codegen::Context,
-) -> anyhow::Result<BTreeMap<String, FuncId>> {
-    let mut signature = Signature::new(cranelift::codegen::isa::CallConv::Fast);
-    signature.params.push(AbiParam::new(types::I64));
-    signature.returns.push(AbiParam::new(types::I64));
+// pub fn link_libc_functions(
+//     module: &mut ObjectModule,
+//     fbx: &mut FunctionBuilderContext,
+//     ctx: &mut cranelift::prelude::codegen::Context,
+// ) -> anyhow::Result<BTreeMap<String, FuncId>> {
+//     let mut signature = Signature::new(cranelift::codegen::isa::CallConv::Fast);
+//     signature.params.push(AbiParam::new(types::I64));
+//     signature.returns.push(AbiParam::new(types::I64));
 
-    let mut map = BTreeMap::new();
-    let libc_malloc_name = "libc_malloc";
-    let libc_malloc = declare_external_function(
-        "malloc",
-        &libc_malloc_name,
-        signature.clone(),
-        module,
-        fbx,
-        ctx,
-    )?;
+//     let mut map = BTreeMap::new();
+//     let libc_malloc_name = "libc_malloc";
+//     let libc_malloc = declare_external_function(
+//         "malloc",
+//         &libc_malloc_name,
+//         signature.clone(),
+//         module,
+//         fbx,
+//         ctx,
+//     )?;
 
-    map.insert(libc_malloc_name.into(), libc_malloc);
+//     map.insert(libc_malloc_name.into(), libc_malloc);
 
-    // signature.returns.clear();
-    // signature.returns.push(AbiParam::new(types::I32));
-    // let libc_puts_name = "libc_puts";
-    // let libc_puts =
-    //     declare_external_function("puts", &libc_puts_name, signature.clone(), module, fbx, ctx)?;
+//     // signature.returns.clear();
+//     // signature.returns.push(AbiParam::new(types::I32));
+//     // let libc_puts_name = "libc_puts";
+//     // let libc_puts =
+//     //     declare_external_function("puts", &libc_puts_name, signature.clone(), module, fbx, ctx)?;
 
-    // map.insert(libc_puts_name.into(), libc_puts);
+//     // map.insert(libc_puts_name.into(), libc_puts);
 
-    Ok(map)
-}
+//     Ok(map)
+// }
 
 pub fn declare_external_function(
     fn_name: &str,
@@ -62,11 +62,6 @@ pub fn declare_external_function(
     let func_id = module
         .declare_function(fn_name, Linkage::Import, &ctx.func.signature)
         .unwrap();
-    // module.define_function(func_id, ctx)?;
-    // module.clear_context(ctx);
-
-    // ctx.func.signature = fn_signature;
-    // let func_id = module.declare_function(libc_fn_name, Linkage::Import, &ctx.func.signature)?;
     let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
     let entry_block = builder.create_block();
     builder.append_block_params_for_function_params(entry_block);
@@ -94,21 +89,6 @@ pub fn declare_external_function(
 
     Ok(id)
 }
-
-// pub fn declare_external_function(
-//     fn_name: &str,
-//     fn_signature: Signature,
-//     module: &mut ObjectModule,
-//     fbx: &mut FunctionBuilderContext,
-//     ctx: &mut cranelift::prelude::codegen::Context,
-// ) -> FuncId {
-//     ctx.func.signature = fn_signature;
-//     let func_id = module
-//         .declare_function(fn_name, Linkage::Import, &ctx.func.signature)
-//         .unwrap();
-//     module.clear_context(ctx);
-//     return func_id;
-// }
 
 pub fn malloc_test() -> anyhow::Result<Vec<u8>> {
     let data_description = DataDescription::new();

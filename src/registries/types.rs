@@ -3,16 +3,24 @@ use std::{
     rc::Rc,
 };
 
+use codegen::ir::condcodes;
 use cranelift::prelude::*;
-use mantis_expression::node::Node;
+use cranelift_object::ObjectModule;
+use mantis_expression::node::{BinaryOperation, Node};
 
-use super::{functions::MsFunctionType, structs::MsStructType, MsRegistry};
+use crate::frontend::compile::MsContext;
 
-#[derive(Clone, Debug, Copy)]
+use super::{
+    functions::MsFunctionType,
+    structs::{array_struct, MsStructType},
+    MsRegistry, MsRegistryExt,
+};
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsNativeType {
     Bool,
     Void,
-    String,
+    Array,
     Function,
     I64,
     I32,
@@ -56,7 +64,7 @@ impl MsNativeType {
             "u64" => Self::U64,
             "f32" => Self::F32,
             "f64" => Self::F64,
-            "str" => Self::String,
+            "array" => Self::Array,
             "bool" => Self::Bool,
             _ => {
                 return None;
@@ -98,6 +106,183 @@ impl MsNativeType {
             _ => todo!(),
         })
     }
+
+    pub(crate) fn add(&self, lhs: Value, rhs: Value, fbx: &mut FunctionBuilder<'_>) -> Value {
+        if self.is_int() {
+            fbx.ins().iadd(lhs, rhs)
+        } else if self.is_float() {
+            fbx.ins().fadd(lhs, rhs)
+        } else {
+            unreachable!()
+        }
+    }
+    pub(crate) fn sub(&self, lhs: Value, rhs: Value, fbx: &mut FunctionBuilder<'_>) -> Value {
+        if self.is_int() {
+            fbx.ins().isub(lhs, rhs)
+        } else if self.is_float() {
+            fbx.ins().fsub(lhs, rhs)
+        } else {
+            unreachable!()
+        }
+    }
+    pub(crate) fn mult(&self, lhs: Value, rhs: Value, fbx: &mut FunctionBuilder<'_>) -> Value {
+        if self.is_int() {
+            fbx.ins().imul(lhs, rhs)
+        } else if self.is_float() {
+            fbx.ins().fmul(lhs, rhs)
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub(crate) fn div(&self, lhs: Value, rhs: Value, fbx: &mut FunctionBuilder<'_>) -> Value {
+        if self.is_int() {
+            if self.is_uint() {
+                fbx.ins().udiv(lhs, rhs)
+            } else {
+                fbx.ins().sdiv(lhs, rhs)
+            }
+        } else if self.is_float() {
+            fbx.ins().fdiv(lhs, rhs)
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub(crate) fn compare(
+        &self,
+        op: BinaryOperation,
+        lhs: Value,
+        rhs: Value,
+        fbx: &mut FunctionBuilder<'_>,
+    ) -> Value {
+        if self.is_int() {
+            fbx.ins().icmp(
+                binary_cmp_op_to_condcode_intcc(op, !self.is_uint()),
+                lhs,
+                rhs,
+            )
+        } else if self.is_float() {
+            fbx.ins().fcmp(binary_cmp_op_to_condcode_fcc(op), lhs, rhs)
+        } else {
+            unreachable!()
+        }
+    }
+
+    pub fn is_int(&self) -> bool {
+        match self {
+            MsNativeType::I8
+            | MsNativeType::U8
+            | MsNativeType::I16
+            | MsNativeType::U16
+            | MsNativeType::U32
+            | MsNativeType::U64
+            | MsNativeType::I64
+            | MsNativeType::I32 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_uint(&self) -> bool {
+        match self {
+            MsNativeType::U32 | MsNativeType::U8 | MsNativeType::U16 | MsNativeType::U64 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_sint(&self) -> bool {
+        match self {
+            MsNativeType::I32 | MsNativeType::I8 | MsNativeType::I16 | MsNativeType::I64 => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_float(&self) -> bool {
+        match self {
+            MsNativeType::F32 | MsNativeType::F64 => true,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn cast_to(&self, lhs: Value, r: &MsType, fbx: &mut FunctionBuilder) -> Value {
+        let MsType::Native(rnty) = r else {
+            panic!("Non native casting not supported yet");
+        };
+        let diff = r.size() as isize - self.size() as isize;
+        let cl_type = rnty.to_cl_type().unwrap();
+        if self.is_int() {
+            if rnty.is_int() {
+                if diff < 0 {
+                    return fbx.ins().ireduce(cl_type, lhs);
+                } else {
+                    if rnty.is_uint() {
+                        return fbx.ins().uextend(cl_type, lhs);
+                    } else {
+                        return fbx.ins().sextend(cl_type, lhs);
+                    }
+                }
+            } else if rnty.is_float() {
+                if self.is_uint() {
+                    return fbx.ins().fcvt_from_uint(cl_type, lhs);
+                } else {
+                    return fbx.ins().fcvt_from_sint(cl_type, lhs);
+                }
+            }
+        }
+        if self.is_float() {
+            if rnty.is_uint() {
+                return fbx.ins().fcvt_to_uint(cl_type, lhs);
+            } else if rnty.is_sint() {
+                return fbx.ins().fcvt_to_sint(cl_type, lhs);
+            } else if rnty.is_float() {
+                if diff > 0 {
+                    return fbx.ins().fpromote(cl_type, lhs);
+                } else if diff < 0 {
+                    return fbx.ins().fdemote(cl_type, lhs);
+                }
+            }
+        }
+
+        lhs
+    }
+}
+
+fn binary_cmp_op_to_condcode_fcc(op: BinaryOperation) -> condcodes::FloatCC {
+    use condcodes::FloatCC;
+    match op {
+        BinaryOperation::GreaterThan => FloatCC::GreaterThan,
+        BinaryOperation::GreaterThanOrEqualTo => FloatCC::GreaterThanOrEqual,
+        BinaryOperation::EqualTo => FloatCC::Equal,
+        BinaryOperation::NotEqualTo => FloatCC::NotEqual,
+        BinaryOperation::LessThan => FloatCC::LessThan,
+        BinaryOperation::LessThanOrEqualTo => FloatCC::GreaterThanOrEqual,
+        _ => unreachable!(),
+    }
+}
+
+pub fn binary_cmp_op_to_condcode_intcc(op: BinaryOperation, signed: bool) -> condcodes::IntCC {
+    use condcodes::IntCC;
+    if signed {
+        match op {
+            BinaryOperation::GreaterThan => IntCC::SignedGreaterThan,
+            BinaryOperation::GreaterThanOrEqualTo => IntCC::SignedGreaterThanOrEqual,
+            BinaryOperation::EqualTo => IntCC::Equal,
+            BinaryOperation::NotEqualTo => IntCC::NotEqual,
+            BinaryOperation::LessThan => IntCC::SignedLessThan,
+            BinaryOperation::LessThanOrEqualTo => IntCC::SignedGreaterThanOrEqual,
+            _ => unreachable!(),
+        }
+    } else {
+        match op {
+            BinaryOperation::GreaterThan => IntCC::UnsignedGreaterThan,
+            BinaryOperation::GreaterThanOrEqualTo => IntCC::UnsignedGreaterThanOrEqual,
+            BinaryOperation::EqualTo => IntCC::Equal,
+            BinaryOperation::NotEqualTo => IntCC::NotEqual,
+            BinaryOperation::LessThan => IntCC::UnsignedLessThan,
+            BinaryOperation::LessThanOrEqualTo => IntCC::UnsignedGreaterThanOrEqual,
+            _ => unreachable!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -108,13 +293,23 @@ pub struct MsGenericType {
 
 #[derive(Clone, Debug)]
 pub enum MsType {
-    Native(MsNativeType),
-    Struct(Rc<MsStructType>),
     Function(Rc<MsFunctionType>),
     Generic(Rc<MsGenericType>),
+    Native(MsNativeType),
+    Struct(Rc<MsStructType>),
 }
 
 impl MsType {
+    pub fn equal(&self, ty: &MsType) -> bool {
+        match (self, ty) {
+            (MsType::Function(t0), MsType::Function(t1)) => Rc::ptr_eq(t0, t1),
+            (MsType::Generic(t0), MsType::Generic(t1)) => Rc::ptr_eq(t0, t1),
+            (MsType::Native(t0), MsType::Native(t1)) => t0 == t1,
+            (MsType::Struct(t0), MsType::Struct(t1)) => Rc::ptr_eq(t0, t1),
+            _ => false,
+        }
+    }
+
     pub fn size(&self) -> usize {
         match self {
             MsType::Native(ty) => ty.size(),
@@ -170,19 +365,22 @@ impl MsRegistry<MsType> for MsTypeRegistry {
 impl Default for MsTypeRegistry {
     fn default() -> Self {
         let mut registry = HashMap::<String, MsType>::with_capacity(512);
-        registry.insert("i8".to_owned(), MsType::Native(MsNativeType::I8));
-        registry.insert("i16".to_owned(), MsType::Native(MsNativeType::I16));
-        registry.insert("i32".to_owned(), MsType::Native(MsNativeType::I32));
-        registry.insert("i64".to_owned(), MsType::Native(MsNativeType::I64));
-        registry.insert("u8".to_owned(), MsType::Native(MsNativeType::U8));
-        registry.insert("u16".to_owned(), MsType::Native(MsNativeType::U16));
-        registry.insert("u32".to_owned(), MsType::Native(MsNativeType::U32));
-        registry.insert("u64".to_owned(), MsType::Native(MsNativeType::U64));
-        registry.insert("f32".to_owned(), MsType::Native(MsNativeType::F32));
-        registry.insert("f64".to_owned(), MsType::Native(MsNativeType::F64));
-        registry.insert("str".to_owned(), MsType::Native(MsNativeType::String));
-        registry.insert("bool".to_owned(), MsType::Native(MsNativeType::Bool));
+        registry.insert("i8".into(), MsType::Native(MsNativeType::I8));
+        registry.insert("i16".into(), MsType::Native(MsNativeType::I16));
+        registry.insert("i32".into(), MsType::Native(MsNativeType::I32));
+        registry.insert("i64".into(), MsType::Native(MsNativeType::I64));
+        registry.insert("u8".into(), MsType::Native(MsNativeType::U8));
+        registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
+        registry.insert("u32".into(), MsType::Native(MsNativeType::U32));
+        registry.insert("u64".into(), MsType::Native(MsNativeType::U64));
+        registry.insert("f32".into(), MsType::Native(MsNativeType::F32));
+        registry.insert("f64".into(), MsType::Native(MsNativeType::F64));
+        // registry.insert("str".into(), MsType::Native(MsNativeType::Array));
+        registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
+        registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
 
         Self { registry }
     }
 }
+
+impl MsRegistryExt<MsType> for MsTypeRegistry {}

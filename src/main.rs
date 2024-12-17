@@ -4,8 +4,12 @@ use std::{collections::HashMap, io::Read};
 
 use clap::Parser;
 use cranelift::codegen::ir::types::I64;
-use frontend::tokenizer::{collect_functions, collect_to_tokens};
+use frontend::{
+    tokenizer::{collect_functions, collect_to_tokens},
+    tokens::MsFunctionDeclaration,
+};
 use lexer::lexer::Lexer;
+use registries::{functions::MsFunctionRegistry, types::MsTypeRegistry};
 
 use crate::{
     backend::cranelift::compile_program,
@@ -27,8 +31,9 @@ mod backend;
 mod frontend;
 mod lexer;
 mod libc;
-pub mod registries;
-pub mod scope;
+mod native;
+mod registries;
+mod scope;
 mod utils;
 
 #[derive(clap::Parser, Debug)]
@@ -43,26 +48,11 @@ struct Args {
 
     // Output executable
     #[arg(long, short)]
-    output: Option<String>,
+    obj: Option<String>,
+
+    #[arg(long, short)]
+    exe: Option<String>,
 }
-
-// fn test() {
-//     let mut registry = StructRegistry::new();
-//     let mut s1 = StructMapBuilder::new();
-//     s1.add_field("a", VariableType::BuiltIn(BuiltInType::I32), &registry);
-//     s1.add_field("b", VariableType::BuiltIn(BuiltInType::I64), &registry);
-//     s1.add_field("c", VariableType::BuiltIn(BuiltInType::F32), &registry);
-//     dbg!(&s1);
-//     registry.add_struct("s1".into(), s1);
-
-//     let mut s2 = StructMapBuilder::new();
-//     s2.add_field("d", VariableType::Custom("s1".into()), &registry);
-//     s2.add_field("d2", VariableType::Custom("s1".into()), &registry);
-//     s2.add_field("a", VariableType::BuiltIn(BuiltInType::I32), &registry);
-//     // s2.add_field("b", VariableType::BuiltIn(BuiltInType::I64), &registry);
-//     // s2.add_field("c", VariableType::BuiltIn(BuiltInType::F32), &registry);
-//     dbg!(&s2);
-// }
 
 fn main() {
     // test();
@@ -79,18 +69,31 @@ fn main() {
 
     // collect_to_tokens("let a = 100.2; b = 0.89");
 
-    let (fns, sr) = collect_functions(input);
+    let (fns, sr, fr) = collect_functions(input);
 
     if let Some(ast_path) = args.ast {
-        std::fs::write(ast_path, format!("{:#?}\n{:#?}", sr, fns)).unwrap();
+        std::fs::write(ast_path, format!("{:#?}\n{:#?}\n{:#?}", sr, fns, fr)).unwrap();
     } else {
-        dbg!(fns);
-        dbg!(sr);
+        dbg!(&fns);
+        dbg!(&sr);
+        dbg!(&fr);
     }
 
-    // if let Some(output_file_path) = args.output {
-    //     create_executable(fns, sr, &output_file_path);
-    // }
+    if let Some(obj_file_path) = args.obj {
+        let bytes = compiler::ms_compile(fns, sr, fr).unwrap();
+        std::fs::write(&obj_file_path, bytes).unwrap();
+        if let Some(exe_file_path) = args.exe {
+            let mut child = std::process::Command::new("gcc")
+                .arg(obj_file_path)
+                .arg("-o")
+                .arg(&exe_file_path)
+                .spawn()
+                .unwrap();
+            let exit_code = child.wait().unwrap();
+            log::info!("gcc exit code: {}", exit_code);
+            log::info!("compiled to {}", exe_file_path);
+        }
+    }
 }
 
 fn init_logger() {
@@ -111,11 +114,12 @@ fn init_logger() {
 }
 
 fn create_executable(
-    fns: Vec<frontend::tokens::FunctionDeclaration>,
-    struct_registry: StructRegistry,
+    fns: Vec<MsFunctionDeclaration>,
+    type_registry: MsTypeRegistry,
+    fn_registry: MsFunctionRegistry,
     output: &str,
 ) {
-    let bytes = compiler::compile(fns, struct_registry).unwrap();
+    let bytes = compiler::ms_compile(fns, type_registry, fn_registry).unwrap();
     let object_file = "/tmp/main.o";
     std::fs::write(object_file, bytes).unwrap();
 
@@ -130,21 +134,21 @@ fn create_executable(
     log::info!("compiled to {}", output);
 }
 
-pub fn compile_file(file_path: &str) {
-    let mut s = String::new();
-    let mut file = std::fs::OpenOptions::new()
-        .read(true)
-        .open(file_path)
-        .unwrap();
-    file.read_to_string(&mut s);
+// pub fn compile_file(file_path: &str) {
+//     let mut s = String::new();
+//     let mut file = std::fs::OpenOptions::new()
+//         .read(true)
+//         .open(file_path)
+//         .unwrap();
+//     file.read_to_string(&mut s);
 
-    let code_parser = CodeParser::new(s.into());
-    let code_words = code_parser.parse().unwrap();
+//     let code_parser = CodeParser::new(s.into());
+//     let code_words = code_parser.parse().unwrap();
 
-    code_words.iter().for_each(|x| {
-        match x {
-            CodeWord::Symbol(bp) => print!("Symbol: {:x?}\n", bp.as_str()),
-            CodeWord::Word(word) => print!("WORD: '{word}'\n"),
-        };
-    });
-}
+//     code_words.iter().for_each(|x| {
+//         match x {
+//             CodeWord::Symbol(bp) => print!("Symbol: {:x?}\n", bp.as_str()),
+//             CodeWord::Word(word) => print!("WORD: '{word}'\n"),
+//         };
+//     });
+// }

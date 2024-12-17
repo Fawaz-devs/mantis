@@ -14,6 +14,13 @@ pub enum BinaryOperation {
     Access,
     Assign,
     Empty,
+
+    GreaterThan,
+    GreaterThanOrEqualTo,
+    EqualTo,
+    NotEqualTo,
+    LessThan,
+    LessThanOrEqualTo,
 }
 impl TryFrom<&MantisLexerTokens> for BinaryOperation {
     type Error = anyhow::Error;
@@ -27,6 +34,13 @@ impl TryFrom<&MantisLexerTokens> for BinaryOperation {
             MantisLexerTokens::Divide => Ok(Self::Div),
             MantisLexerTokens::As => Ok(Self::Cast),
             MantisLexerTokens::Dot => Ok(Self::Access),
+
+            MantisLexerTokens::GreaterThan => Ok(Self::GreaterThan),
+            MantisLexerTokens::GreaterThanOrEqualTo => Ok(Self::GreaterThanOrEqualTo),
+            MantisLexerTokens::EqualTo => Ok(Self::EqualTo),
+            MantisLexerTokens::NotEqualTo => Ok(Self::NotEqualTo),
+            MantisLexerTokens::LessThan => Ok(Self::LessThan),
+            MantisLexerTokens::LessThanOrEqualTo => Ok(Self::LessThanOrEqualTo),
 
             _ => Err(anyhow::anyhow!("Invalid Binary Operation")),
         }

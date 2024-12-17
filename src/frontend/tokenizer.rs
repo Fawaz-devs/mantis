@@ -10,10 +10,10 @@ use mantis_tokens::MantisLexerTokens;
 use crate::{
     frontend::tokens::{MsExpression, MsNode},
     registries::{
-        functions::FunctionType,
+        functions::{FunctionType, MsFunctionRegistry, MsFunctionType},
         structs::MsStructType,
         types::{MsNativeType, MsType, MsTypeRegistry},
-        MsRegistry,
+        MsRegistry, MsRegistryExt,
     },
 };
 
@@ -62,17 +62,25 @@ pub fn read_to_tokens(input: String) -> (Vec<FunctionDeclaration>, MsTypeRegistr
     return (functions, type_registry);
 }
 
-pub fn collect_functions(input: String) -> (Vec<MsFunctionDeclaration>, MsTypeRegistry) {
+pub fn collect_functions(
+    input: String,
+) -> (
+    Vec<MsFunctionDeclaration>,
+    MsTypeRegistry,
+    MsFunctionRegistry,
+) {
     let mut lexer = MantisLexerTokens::lexer(&input);
 
     let mut functions = Vec::new();
 
+    let mut fn_registry = MsFunctionRegistry::default();
     let mut type_registry = MsTypeRegistry::default();
 
     while let Some(token) = lexer.next() {
         match token {
             Ok(MantisLexerTokens::FunctionDecl) => {
                 let decl = parse_ms_fn_declaration(&mut lexer, &type_registry);
+                fn_registry.add(decl.name.clone(), MsFunctionType::from(&decl));
                 functions.push(decl);
             }
 
@@ -88,7 +96,7 @@ pub fn collect_functions(input: String) -> (Vec<MsFunctionDeclaration>, MsTypeRe
         };
     }
 
-    return (functions, type_registry);
+    return (functions, type_registry, fn_registry);
 }
 
 fn parse_type(lexer: &mut Lexer<'_, MantisLexerTokens>) {
@@ -429,24 +437,24 @@ pub fn parse_ms_expression_and_append(
             Ok(MantisLexerTokens::BraceOpen) => {
                 let scope = parse_ms_scope(lexer, &type_registry);
                 if loop_begun {
-                    output.push(MsExpression::Scope(super::tokens::ScopeType::Loop, scope));
+                    output.push(MsExpression::Scope(super::tokens::MsScopeType::Loop, scope));
                     size = 1;
                 } else if else_begun {
-                    output.push(MsExpression::Scope(super::tokens::ScopeType::Else, scope));
+                    output.push(MsExpression::Scope(super::tokens::MsScopeType::Else, scope));
                     size = 1;
                 } else if if_begun {
                     log::info!("if scope with condition {:?}", tokens);
-                    let node = Node::parse(&tokens).unwrap();
+                    let node = MsNode::parse_expression(&tokens).unwrap();
                     output.push(MsExpression::Scope(
-                        super::tokens::ScopeType::If(node),
+                        super::tokens::MsScopeType::If(node),
                         scope,
                     ));
                     size = 1;
                 } else if elseif_begun {
                     log::info!("if scope with condition {:?}", tokens);
-                    let node = Node::parse(&tokens).unwrap();
+                    let node = MsNode::parse_expression(&tokens).unwrap();
                     output.push(MsExpression::Scope(
-                        super::tokens::ScopeType::ElseIf(node),
+                        super::tokens::MsScopeType::ElseIf(node),
                         scope,
                     ));
                     size = 1;

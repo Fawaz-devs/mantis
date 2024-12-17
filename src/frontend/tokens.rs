@@ -1,4 +1,5 @@
 use cranelift_module::FuncId;
+use mantis_expression::node::BinaryOperation;
 use std::{collections::BTreeMap, rc::Rc};
 
 use cranelift::{
@@ -12,11 +13,12 @@ use logos::Logos;
 
 use crate::{
     libc::libc::declare_external_function,
+    native::instructions::translate_node,
     registries::{
-        functions::FunctionType,
-        types::{MsType, MsTypeRegistry},
+        functions::{FunctionType, MsFunctionRegistry, MsFunctionType},
+        types::{MsNativeType, MsType, MsTypeRegistry},
         variable::{MsVal, MsVar, MsVarRegistry},
-        MsRegistry,
+        MsRegistry, MsRegistryExt,
     },
     scope::MsScopes,
 };
@@ -382,6 +384,27 @@ pub enum ScopeType {
 }
 
 #[derive(Clone, Debug)]
+pub enum MsScopeType {
+    If(MsNode),
+    ElseIf(MsNode),
+    Else,
+    Loop,
+    Empty,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum MsClScopeType {
+    If,
+    ElseIf,
+    Else,
+    Loop,
+    Entry,
+    Merge,
+    Exit,
+    Empty,
+}
+
+#[derive(Clone, Debug)]
 pub enum Expression {
     Assign(MsVariable, Node),
     ConstLiteral(MsVariable, String), // MsVariable and Value
@@ -401,7 +424,7 @@ pub enum MsExpression {
     Return(MsNode),
     Break,
     Continue,
-    Scope(ScopeType, Vec<MsExpression>),
+    Scope(MsScopeType, Vec<MsExpression>),
 }
 impl MsExpression {
     fn translate(
@@ -417,203 +440,153 @@ impl MsExpression {
                 ms_ctx
                     .scopes
                     .last_scope_mut()
-                    .get_registry_mut()
-                    .insert(var_name.clone(), MsVar::new(ty.clone(), var));
+                    .unwrap()
+                    .variables
+                    .add(var_name.clone(), MsVar::new(ty.clone(), var));
             }
-            MsExpression::Operation(node) => translate_node(&node, ms_ctx, fbx, module),
+            MsExpression::Operation(node) => {
+                let _ = translate_node(&node, ms_ctx, fbx, module);
+            }
             MsExpression::Return(ret) => {
                 if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
-                    let mut value = translate_node(&ret, ms_ctx, fbx, module).value;
+                    let mut value = translate_node(&ret, ms_ctx, fbx, module).value(fbx);
                     fbx.ins().return_(&[value]);
                 } else {
                     panic!("Function doesn't support return type");
                 }
             }
-            MsExpression::Break => {}
-            MsExpression::Continue => {}
-            MsExpression::Scope(sc_ty, expressions) => {}
-        };
-        match self {
-            Expression::ConstLiteral(_, _) => todo!(),
-            Expression::Declare(var, val) => {
-                let value = val.translate(ms_ctx, fbx, module);
-                if let Some(variable) = ms_ctx.local_variables.get(&var.name) {
-                    fbx.def_var(variable.var.clone(), value.value);
-                } else {
-                    if let VariableType::Native(t) = var.var_type {
-                        let variable = ms_ctx.new_variable();
-                        fbx.declare_var(variable, t);
-                        // let value = val.translate(ms_ctx, fbx, module);
-                        fbx.def_var(variable, value.value);
-                        ms_ctx.local_variables.insert(
-                            var.name.clone(),
-                            CraneliftVariable {
-                                var: variable,
-                                ms_var: var.clone(),
-                            },
-                        );
-                    } else if let VariableType::BuiltIn(t) = var.var_type {
-                        let variable = ms_ctx.new_variable();
-                        fbx.declare_var(variable, t.to_cranelift_type().unwrap());
-                        fbx.def_var(variable, value.value);
-                        if let Some(svalue) = ms_ctx.struct_registry.get_struct(&var.name) {
-                            ms_ctx.local_variables.insert(
-                                var.name.clone(),
-                                CraneliftVariable {
-                                    var: variable,
-                                    ms_var: MsVariable {
-                                        name: var.name.clone(),
-                                        var_type: VariableType::Custom(var.name.clone()),
-                                    },
-                                },
-                            );
-                        } else {
-                            ms_ctx.local_variables.insert(
-                                var.name.clone(),
-                                CraneliftVariable {
-                                    var: variable,
-                                    ms_var: var.clone(),
-                                },
-                            );
-                        }
-                    } else {
-                        panic!("Unsupported type {:?}, {:?}", var, val);
+            MsExpression::Break => {
+                let scope = ms_ctx
+                    .scopes
+                    .find_last_scope_of_type(MsClScopeType::Loop)
+                    .expect("Not inside a loop to break");
+                match scope.scope_type {
+                    MsClScopeType::Exit => {
+                        fbx.ins().jump(scope.block, &[]);
                     }
+                    _ => {}
                 }
             }
-            Expression::Operation(val) => {
-                val.translate(ms_ctx, fbx, module);
+            MsExpression::Continue => {
+                let scope = ms_ctx
+                    .scopes
+                    .find_last_scope_of_type(MsClScopeType::Loop)
+                    .expect("Not inside a loop for continue");
+                fbx.ins().jump(scope.block, &[]);
             }
-            Expression::Return(val) => {
-                if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
-                    let mut value = val.translate(ms_ctx, fbx, module).value;
-                    fbx.ins().return_(&[value]);
-                } else {
-                    panic!("Function doesn't support return type");
-                }
-            }
-            Expression::Nil => {}
-            Expression::Scope(scope_type, expressions) => match scope_type {
-                ScopeType::If(node) => {
+            MsExpression::Scope(sc_ty, expressions) => match sc_ty {
+                MsScopeType::If(node) => {
                     let iftrue_block = fbx.create_block();
                     let else_block = fbx.create_block();
                     let merge_block = fbx.create_block();
-                    let val = node.translate(ms_ctx, fbx, module);
-                    let scope_index = ms_ctx.named_scopes.len();
-                    ms_ctx
-                        .named_scopes
-                        .insert(format!("else-{scope_index}"), MsScope::new(else_block));
-                    ms_ctx
-                        .named_scopes
-                        .insert(format!("exit-if-{scope_index}"), MsScope::new(merge_block));
+                    let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
 
-                    fbx.ins()
-                        .brif(val.value, iftrue_block, &[], else_block, &[]);
+                    ms_ctx.scopes.new_scope(merge_block, MsClScopeType::Merge);
+                    ms_ctx.scopes.new_scope(else_block, MsClScopeType::Else);
+                    ms_ctx.scopes.new_scope(iftrue_block, MsClScopeType::If);
+
+                    fbx.ins().brif(val, iftrue_block, &[], else_block, &[]);
                     fbx.switch_to_block(iftrue_block);
                     fbx.seal_block(iftrue_block);
 
                     let mut jumped_already = false;
                     for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module);
+                        expr.translate(ms_ctx, fbx, module).unwrap();
                         match expr {
-                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                            MsExpression::Break
+                            | MsExpression::Continue
+                            | MsExpression::Return(_) => {
                                 jumped_already = true;
                             }
                             _ => {}
                         }
                     }
+                    ms_ctx.scopes.exit_scope().unwrap();
 
                     if !jumped_already {
                         fbx.ins().jump(merge_block, &[]);
                     }
                 }
 
-                ScopeType::ElseIf(node) => {
+                MsScopeType::ElseIf(node) => {
                     let mut jumped_already = false;
 
-                    let (ek, block) =
-                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
-                    let else_block = block.block;
+                    let else_scope = ms_ctx.scopes.exit_scope().unwrap();
+                    let merge_block = ms_ctx.scopes.last_scope().unwrap().block;
 
                     let elseif_block = fbx.create_block();
                     let nextelseif_block = fbx.create_block();
+
                     ms_ctx
-                        .named_scopes
-                        .insert(ek.clone(), MsScope::new(nextelseif_block));
-                    fbx.switch_to_block(else_block);
-                    fbx.seal_block(else_block);
+                        .scopes
+                        .new_scope(nextelseif_block, MsClScopeType::Else);
 
-                    let val = node.translate(ms_ctx, fbx, module);
+                    ms_ctx.scopes.new_scope(elseif_block, MsClScopeType::ElseIf);
 
-                    let (mk, block) =
-                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
+                    fbx.switch_to_block(else_scope.block);
+                    fbx.seal_block(else_scope.block);
 
-                    let merge_block = block.block;
+                    let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
 
                     fbx.ins()
-                        .brif(val.value, elseif_block, &[], nextelseif_block, &[]);
+                        .brif(val, elseif_block, &[], nextelseif_block, &[]);
 
                     fbx.switch_to_block(elseif_block);
                     fbx.seal_block(elseif_block);
                     for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module);
+                        expr.translate(ms_ctx, fbx, module).unwrap();
 
-                        match expr {
-                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                        match &expr {
+                            MsExpression::Break
+                            | MsExpression::Continue
+                            | MsExpression::Return(_) => {
                                 jumped_already = true;
                             }
                             _ => {}
                         }
                     }
 
+                    ms_ctx.scopes.exit_scope().unwrap();
+
                     if !jumped_already {
                         fbx.ins().jump(merge_block, &[]);
                     }
                 }
-                ScopeType::Else => {
+                MsScopeType::Else => {
                     let mut jumped_already = false;
 
-                    let (ek, block) =
-                        find_last_key_starts_with(&ms_ctx.named_scopes, "else").unwrap();
-                    let else_block = block.block;
+                    let else_scope = ms_ctx.scopes.exit_scope().unwrap();
 
-                    ms_ctx.named_scopes.remove(&ek.clone());
-                    fbx.switch_to_block(else_block);
-                    fbx.seal_block(else_block);
+                    fbx.switch_to_block(else_scope.block);
+                    fbx.seal_block(else_scope.block);
 
                     for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module);
+                        expr.translate(ms_ctx, fbx, module).unwrap();
 
                         match expr {
-                            Expression::Break | Expression::Continue | Expression::Return(_) => {
+                            MsExpression::Break
+                            | MsExpression::Continue
+                            | MsExpression::Return(_) => {
                                 jumped_already = true;
                             }
                             _ => {}
                         }
                     }
-                    let (mk, block) =
-                        find_last_key_starts_with(&ms_ctx.named_scopes, "exit-if").unwrap();
 
-                    let merge_block = block.block;
+                    let merge_scope = ms_ctx.scopes.exit_scope().unwrap();
                     if !jumped_already {
-                        fbx.ins().jump(merge_block, &[]);
+                        fbx.ins().jump(merge_scope.block, &[]);
                     }
 
-                    ms_ctx.named_scopes.remove(&mk.clone());
-                    fbx.switch_to_block(merge_block);
-                    fbx.seal_block(merge_block);
+                    fbx.switch_to_block(merge_scope.block);
+                    fbx.seal_block(merge_scope.block);
                 }
-                ScopeType::Loop => {
+                MsScopeType::Loop => {
                     let loop_block = fbx.create_block();
                     let exit_block = fbx.create_block();
-                    let scopes_index = ms_ctx.named_scopes.len();
-                    ms_ctx
-                        .named_scopes
-                        .insert(format!("loop-{}", scopes_index), MsScope::new(loop_block));
-                    ms_ctx.named_scopes.insert(
-                        format!("exit-loop-{}", scopes_index),
-                        MsScope::new(exit_block),
-                    );
+
+                    ms_ctx.scopes.new_scope(exit_block, MsClScopeType::Exit);
+                    ms_ctx.scopes.new_scope(loop_block, MsClScopeType::Loop);
 
                     fbx.ins().jump(loop_block, &[]);
                     fbx.switch_to_block(loop_block);
@@ -622,25 +595,19 @@ impl MsExpression {
                     }
                     fbx.seal_block(loop_block);
 
+                    ms_ctx.scopes.exit_scope().unwrap();
+
                     fbx.ins().jump(exit_block, &[]);
                     fbx.switch_to_block(exit_block);
                     fbx.seal_block(exit_block);
+                    ms_ctx.scopes.exit_scope().unwrap();
                 }
 
-                ScopeType::Empty => todo!(),
+                MsScopeType::Empty => todo!(),
             },
-            Expression::Break => {
-                let (_, exit_block) =
-                    find_last_key_starts_with(&ms_ctx.named_scopes, "exit-loop").unwrap();
-                fbx.ins().jump(exit_block.block, &[]);
-            }
-            Expression::Continue => {
-                let (_, loop_block) =
-                    find_last_key_starts_with(&ms_ctx.named_scopes, "loop-").unwrap();
-                fbx.ins().jump(loop_block.block, &[]);
-            }
-        }
-        None
+        };
+
+        Some(())
     }
 }
 
@@ -659,12 +626,30 @@ impl MsScope {
     }
 }
 
+#[derive(Debug)]
+pub struct MsClScope {
+    pub block: Block,
+    pub scope_type: MsClScopeType,
+    pub variables: MsVarRegistry,
+}
+impl MsClScope {
+    pub fn new(block: Block, scope_type: MsClScopeType) -> MsClScope {
+        Self {
+            block,
+            variables: MsVarRegistry::default(),
+            scope_type,
+        }
+    }
+}
+
 pub struct MsContext {
     local_variables: BTreeMap<String, CraneliftVariable>,
     variable_index: usize,
     named_scopes: BTreeMap<String, MsScope>,
     struct_registry: StructRegistry,
-    scopes: MsScopes<MsVarRegistry>,
+    pub type_registry: MsTypeRegistry,
+    pub scopes: MsScopes,
+    pub fn_registry: MsFunctionRegistry,
 }
 
 pub struct FunctionSignature {
@@ -690,6 +675,8 @@ impl MsContext {
             named_scopes: BTreeMap::new(),
             struct_registry: StructRegistry::new(),
             scopes: MsScopes::default(),
+            type_registry: MsTypeRegistry::default(),
+            fn_registry: MsFunctionRegistry::default(),
         }
     }
 
@@ -948,9 +935,9 @@ pub struct FunctionDeclaration {
 #[derive(Clone, Debug)]
 pub struct MsFunctionDeclaration {
     pub name: String,
+    pub body: Vec<MsExpression>,
     pub return_type: MsType,
     pub arguments: Vec<MsTypedVariable>,
-    pub body: Vec<MsExpression>,
     pub fn_type: FunctionType,
 }
 
@@ -978,11 +965,10 @@ impl MsFunctionDeclaration {
             ctx.func.signature.returns.push(var_ty);
         }
 
-        if self.body.is_empty() {
+        if self.body.is_empty() || matches!(self.fn_type, FunctionType::Extern) {
             let func_id = declare_external_function(
                 &self.name,
                 &format!("ext_{}", self.name),
-                // &self.name,
                 ctx.func.signature.clone(),
                 module,
                 fbx,
@@ -996,6 +982,7 @@ impl MsFunctionDeclaration {
         let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
 
         let entry_block = builder.create_block();
+        ms_ctx.scopes.new_scope(entry_block, MsClScopeType::Entry);
 
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
@@ -1003,27 +990,28 @@ impl MsFunctionDeclaration {
         let values = builder.block_params(entry_block).to_vec();
         for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
             let var = ms_ctx.new_variable();
-            // variables.insert(variable.name.clone(), value);
             let ty = variable.var_type.to_cl_type().expect("type can't be void");
-            // ms_ctx.scopes.get_last_mut(|registry| {
-            //     registry
-            //         .get_registry_mut()
-            //         .insert(variable.name, variable.var_type);
-            // });
-
             let ms_var = MsVar::new(variable.var_type.clone(), var);
-
             ms_ctx
                 .scopes
                 .last_scope_mut()
-                .get_registry_mut()
-                .insert(variable.name.clone(), ms_var);
+                .unwrap()
+                .variables
+                .add(variable.name.clone(), ms_var);
 
-            builder.try_declare_var(var, ty).unwrap();
+            builder.declare_var(var, ty);
         }
-        for expression in self.body {
-            expression.translate(ms_ctx, &mut builder, module);
+        for expression in &self.body {
+            expression.translate(ms_ctx, &mut builder, module).unwrap();
         }
+
+        loop {
+            let scope = ms_ctx.scopes.exit_scope().unwrap();
+            if matches!(scope.scope_type, MsClScopeType::Entry) {
+                break;
+            }
+        }
+
         builder.seal_all_blocks();
         builder.finalize();
 
@@ -1033,7 +1021,7 @@ impl MsFunctionDeclaration {
 
         log::info!("Function Declared {} {}", self.name, func_id);
 
-        module.define_function(func_id, ctx);
+        module.define_function(func_id, ctx).unwrap();
         module.clear_context(ctx);
 
         return func_id;
@@ -1722,14 +1710,4 @@ pub fn find_last_key_starts_with<'a, T>(
     }
 
     return pair;
-}
-
-pub fn translate_node(
-    node: &MsNode,
-
-    ms_ctx: &mut MsContext,
-    fbx: &mut FunctionBuilder<'_>,
-    module: &mut ObjectModule,
-) -> MsVal {
-    todo!()
 }

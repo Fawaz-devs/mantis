@@ -58,6 +58,13 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
             | MantisLexerTokens::Assign
             | MantisLexerTokens::As
             | MantisLexerTokens::Dot
+            | MantisLexerTokens::GreaterThan
+            | MantisLexerTokens::GreaterThanOrEqualTo
+            | MantisLexerTokens::EqualTo
+            | MantisLexerTokens::NotEqualTo
+            | MantisLexerTokens::LessThan
+            | MantisLexerTokens::LessThanOrEqualTo
+
              => {
                 let operation = BinaryOperation::try_from(c)?;
 
@@ -262,8 +269,22 @@ fn add_node_to_left_most_child(parent: &mut Node, lhs: Node, operator: BinaryOpe
 fn get_priority(a: BinaryOperation, b: BinaryOperation) -> isize {
     use BinaryOperation::*;
 
-    // let priority_order = ['@', '.', '*', '+'];
-    let priority_order = [Call, Access, Div, Mult, Sub, Add, Cast, Assign];
+    let priority_order = [
+        Call,
+        Access,
+        Div,
+        Mult,
+        Sub,
+        Add,
+        GreaterThan,
+        GreaterThanOrEqualTo,
+        EqualTo,
+        NotEqualTo,
+        LessThan,
+        LessThanOrEqualTo,
+        Cast,
+        Assign,
+    ];
     let mut ad = -1;
     let mut bd = -1;
     for (i, &c) in priority_order.iter().enumerate() {

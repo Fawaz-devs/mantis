@@ -1,9 +1,13 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use cranelift::prelude::AbiParam;
+use cranelift::prelude::{types, AbiParam, FunctionBuilder, InstBuilder};
+use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_object::ObjectModule;
 use linear_map::LinearMap;
 
-use super::{types::MsType, MsRegistry};
+use crate::frontend::compile::MsContext;
+
+use super::{types::MsType, variable::MsVal, MsRegistry};
 
 #[derive(Debug, Clone)]
 pub struct MsStructFieldValue {
@@ -30,7 +34,7 @@ impl MsStructType {
         }
     }
 
-    pub fn add_field(&mut self, field_name: String, field_type: MsType) {
+    pub fn add_field(&mut self, field_name: impl Into<String>, field_type: MsType) {
         let size = field_type.size();
         let align = field_type.align();
 
@@ -39,7 +43,7 @@ impl MsStructType {
         }
 
         self.fields.insert(
-            field_name,
+            field_name.into(),
             MsStructFieldValue {
                 offset: self.size,
                 ty: field_type,
@@ -55,4 +59,36 @@ impl MsStructType {
     pub fn to_abi_param(&self) -> AbiParam {
         todo!()
     }
+
+    pub fn set_data(
+        &self,
+        ptr: MsVal,
+        values: BTreeMap<String, MsVal>,
+        ms_ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder<'_>,
+        module: &mut ObjectModule,
+    ) {
+        for (k, v) in self.fields.iter() {
+            let val = values.get(k).expect("Missing field on struct");
+
+            if !v.ty.equal(&val.ty) {
+                panic!("Types don match {:?} != {:?}", v.ty, val.ty);
+            }
+
+            let field = self.get_field(k).unwrap();
+            let offset = fbx.ins().iconst(types::I64, field.offset as i64);
+            let field_ptr = fbx.ins().iadd(ptr.value, offset);
+
+            todo!()
+        }
+    }
+}
+
+pub fn array_struct() -> MsStructType {
+    let mut st = MsStructType::default();
+
+    st.add_field("size", MsType::Native(super::types::MsNativeType::U64));
+    st.add_field("ptr", MsType::Native(super::types::MsNativeType::U64));
+
+    return st;
 }
