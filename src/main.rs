@@ -55,19 +55,33 @@ struct Args {
 }
 
 fn main() {
-    // test();
-    // panic!("Test is done");
-
-    // env_logger::init();
     init_logger();
-
     let args = Args::parse();
+    handle0(args);
 
+    // handle1(args);
+}
+
+fn init_logger() {
+    use std::io::Write;
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            let ts = buf.timestamp();
+            writeln!(
+                buf,
+                "{} [{}:{}] - {}",
+                ts,
+                record.file().unwrap_or("unknown"),
+                record.line().unwrap_or(0),
+                record.args()
+            )
+        })
+        .init();
+}
+
+fn handle0(args: Args) {
     let filepath = args.input;
-
     let input = std::fs::read_to_string(filepath).unwrap();
-
-    // collect_to_tokens("let a = 100.2; b = 0.89");
 
     let (fns, sr, fr) = collect_functions(input);
 
@@ -95,60 +109,32 @@ fn main() {
         }
     }
 }
+fn handle1(args: Args) {
+    let filepath = args.input;
+    let input = std::fs::read_to_string(filepath).unwrap();
 
-fn init_logger() {
-    use std::io::Write;
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format(|buf, record| {
-            let ts = buf.timestamp();
-            writeln!(
-                buf,
-                "{} [{}:{}] - {}",
-                ts,
-                record.file().unwrap_or("unknown"),
-                record.line().unwrap_or(0),
-                record.args()
-            )
-        })
-        .init();
+    let (fns, sr) = read_to_tokens(input);
+
+    if let Some(ast_path) = args.ast {
+        std::fs::write(ast_path, format!("{:#?}\n{:#?}", sr, fns)).unwrap();
+    } else {
+        dbg!(&fns);
+        dbg!(&sr);
+    }
+
+    if let Some(obj_file_path) = args.obj {
+        let bytes = compiler::compile(fns, StructRegistry::new()).unwrap();
+        std::fs::write(&obj_file_path, bytes).unwrap();
+        if let Some(exe_file_path) = args.exe {
+            let mut child = std::process::Command::new("gcc")
+                .arg(obj_file_path)
+                .arg("-o")
+                .arg(&exe_file_path)
+                .spawn()
+                .unwrap();
+            let exit_code = child.wait().unwrap();
+            log::info!("gcc exit code: {}", exit_code);
+            log::info!("compiled to {}", exe_file_path);
+        }
+    }
 }
-
-fn create_executable(
-    fns: Vec<MsFunctionDeclaration>,
-    type_registry: MsTypeRegistry,
-    fn_registry: MsFunctionRegistry,
-    output: &str,
-) {
-    let bytes = compiler::ms_compile(fns, type_registry, fn_registry).unwrap();
-    let object_file = "/tmp/main.o";
-    std::fs::write(object_file, bytes).unwrap();
-
-    let mut child = std::process::Command::new("gcc")
-        .arg(object_file)
-        .arg("-o")
-        .arg(output)
-        .spawn()
-        .unwrap();
-    let exit_code = child.wait().unwrap();
-    log::info!("gcc exit code: {}", exit_code);
-    log::info!("compiled to {}", output);
-}
-
-// pub fn compile_file(file_path: &str) {
-//     let mut s = String::new();
-//     let mut file = std::fs::OpenOptions::new()
-//         .read(true)
-//         .open(file_path)
-//         .unwrap();
-//     file.read_to_string(&mut s);
-
-//     let code_parser = CodeParser::new(s.into());
-//     let code_words = code_parser.parse().unwrap();
-
-//     code_words.iter().for_each(|x| {
-//         match x {
-//             CodeWord::Symbol(bp) => print!("Symbol: {:x?}\n", bp.as_str()),
-//             CodeWord::Word(word) => print!("WORD: '{word}'\n"),
-//         };
-//     });
-// }

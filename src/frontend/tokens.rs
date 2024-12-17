@@ -392,15 +392,14 @@ pub enum MsScopeType {
     Empty,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsClScopeType {
     If,
-    ElseIf,
     Else,
     Loop,
     Entry,
-    Merge,
-    Exit,
+    ExitIf,
+    ExitLoop,
     Empty,
 }
 
@@ -455,25 +454,6 @@ impl MsExpression {
                     panic!("Function doesn't support return type");
                 }
             }
-            MsExpression::Break => {
-                let scope = ms_ctx
-                    .scopes
-                    .find_last_scope_of_type(MsClScopeType::Loop)
-                    .expect("Not inside a loop to break");
-                match scope.scope_type {
-                    MsClScopeType::Exit => {
-                        fbx.ins().jump(scope.block, &[]);
-                    }
-                    _ => {}
-                }
-            }
-            MsExpression::Continue => {
-                let scope = ms_ctx
-                    .scopes
-                    .find_last_scope_of_type(MsClScopeType::Loop)
-                    .expect("Not inside a loop for continue");
-                fbx.ins().jump(scope.block, &[]);
-            }
             MsExpression::Scope(sc_ty, expressions) => match sc_ty {
                 MsScopeType::If(node) => {
                     let iftrue_block = fbx.create_block();
@@ -481,7 +461,7 @@ impl MsExpression {
                     let merge_block = fbx.create_block();
                     let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
 
-                    ms_ctx.scopes.new_scope(merge_block, MsClScopeType::Merge);
+                    ms_ctx.scopes.new_scope(merge_block, MsClScopeType::ExitIf);
                     ms_ctx.scopes.new_scope(else_block, MsClScopeType::Else);
                     ms_ctx.scopes.new_scope(iftrue_block, MsClScopeType::If);
 
@@ -512,7 +492,11 @@ impl MsExpression {
                     let mut jumped_already = false;
 
                     let else_scope = ms_ctx.scopes.exit_scope().unwrap();
-                    let merge_block = ms_ctx.scopes.last_scope().unwrap().block;
+                    assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
+                    let merge_scope = ms_ctx.scopes.last_scope().unwrap();
+                    assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
+
+                    let merge_block = merge_scope.block;
 
                     let elseif_block = fbx.create_block();
                     let nextelseif_block = fbx.create_block();
@@ -521,7 +505,7 @@ impl MsExpression {
                         .scopes
                         .new_scope(nextelseif_block, MsClScopeType::Else);
 
-                    ms_ctx.scopes.new_scope(elseif_block, MsClScopeType::ElseIf);
+                    ms_ctx.scopes.new_scope(elseif_block, MsClScopeType::Else); // Maybe make this empty scope
 
                     fbx.switch_to_block(else_scope.block);
                     fbx.seal_block(else_scope.block);
@@ -556,6 +540,7 @@ impl MsExpression {
                     let mut jumped_already = false;
 
                     let else_scope = ms_ctx.scopes.exit_scope().unwrap();
+                    assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
 
                     fbx.switch_to_block(else_scope.block);
                     fbx.seal_block(else_scope.block);
@@ -574,6 +559,7 @@ impl MsExpression {
                     }
 
                     let merge_scope = ms_ctx.scopes.exit_scope().unwrap();
+                    assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
                     if !jumped_already {
                         fbx.ins().jump(merge_scope.block, &[]);
                     }
@@ -585,7 +571,7 @@ impl MsExpression {
                     let loop_block = fbx.create_block();
                     let exit_block = fbx.create_block();
 
-                    ms_ctx.scopes.new_scope(exit_block, MsClScopeType::Exit);
+                    ms_ctx.scopes.new_scope(exit_block, MsClScopeType::ExitLoop);
                     ms_ctx.scopes.new_scope(loop_block, MsClScopeType::Loop);
 
                     fbx.ins().jump(loop_block, &[]);
@@ -593,18 +579,40 @@ impl MsExpression {
                     for expr in expressions {
                         expr.translate(ms_ctx, fbx, module);
                     }
+
                     fbx.seal_block(loop_block);
-
-                    ms_ctx.scopes.exit_scope().unwrap();
-
                     fbx.ins().jump(exit_block, &[]);
                     fbx.switch_to_block(exit_block);
                     fbx.seal_block(exit_block);
-                    ms_ctx.scopes.exit_scope().unwrap();
+                    let scope = ms_ctx.scopes.exit_scope().unwrap(); // loop block
+                    assert!(matches!(scope.scope_type, MsClScopeType::Loop));
+                    let scope = ms_ctx.scopes.exit_scope().unwrap(); // exit block
+                    assert!(matches!(scope.scope_type, MsClScopeType::ExitLoop));
                 }
 
                 MsScopeType::Empty => todo!(),
             },
+
+            MsExpression::Break => {
+                let scope = ms_ctx
+                    .scopes
+                    .find_last_scope_of_type(MsClScopeType::ExitLoop)
+                    .expect("Not inside a loop to break");
+                log::info!("Breaking, jumping to {:?}", scope);
+                fbx.ins().jump(scope.block, &[]);
+            }
+            MsExpression::Continue => {
+                let scope = ms_ctx
+                    .scopes
+                    .find_last_scope_of_type(MsClScopeType::Loop)
+                    .expect("Not inside a loop for continue");
+                log::info!(
+                    "Continue, jumping to {:?}, from {:?}",
+                    scope,
+                    fbx.current_block()
+                );
+                fbx.ins().jump(scope.block, &[]);
+            }
         };
 
         Some(())
@@ -1000,13 +1008,13 @@ impl MsFunctionDeclaration {
                 .add(variable.name.clone(), ms_var);
 
             builder.declare_var(var, ty);
+            builder.def_var(var, value);
         }
         for expression in &self.body {
             expression.translate(ms_ctx, &mut builder, module).unwrap();
         }
 
-        loop {
-            let scope = ms_ctx.scopes.exit_scope().unwrap();
+        while let Some(scope) = ms_ctx.scopes.exit_scope() {
             if matches!(scope.scope_type, MsClScopeType::Entry) {
                 break;
             }

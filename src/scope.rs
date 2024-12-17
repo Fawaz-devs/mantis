@@ -16,10 +16,13 @@ pub struct MsScopes {
 
 impl MsScopes {
     pub fn find_last_scope_of_type(&self, scope_ty: MsClScopeType) -> Option<&MsClScope> {
-        self.scopes
-            .iter()
-            .rev()
-            .find(|x| matches!(x.scope_type, scope_ty))
+        for scope in self.scopes.iter().rev() {
+            if scope.scope_type == scope_ty {
+                return Some(scope);
+            }
+        }
+
+        return None;
     }
 
     pub fn new_scope(&mut self, block: Block, scope_ty: MsClScopeType) {

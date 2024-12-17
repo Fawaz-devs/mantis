@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use codegen::ir::condcodes;
+use codegen::ir::{condcodes, Inst};
 use cranelift::prelude::*;
 use cranelift_object::ObjectModule;
 use mantis_expression::node::{BinaryOperation, Node};
@@ -244,6 +244,16 @@ impl MsNativeType {
         }
 
         lhs
+    }
+
+    pub(crate) fn store(
+        &self,
+        ptr: Value,
+        offset: i32,
+        rhs: Value,
+        fbx: &mut FunctionBuilder,
+    ) -> Inst {
+        fbx.ins().store(MemFlags::new(), rhs, ptr, offset)
     }
 }
 

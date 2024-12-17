@@ -11,8 +11,8 @@ use super::{types::MsType, variable::MsVal, MsRegistry};
 
 #[derive(Debug, Clone)]
 pub struct MsStructFieldValue {
-    offset: usize,
-    ty: MsType,
+    pub offset: usize,
+    pub ty: MsType,
 }
 
 #[derive(Clone, Debug, Default)]

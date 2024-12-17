@@ -13,31 +13,6 @@ use crate::{
     },
 };
 
-#[inline]
-fn i32_to_i64(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().sextend(types::I64, a)
-}
-
-fn i64_to_i32(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().ireduce(types::I32, a)
-}
-
-fn f32_to_f64(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().fpromote(types::F64, a)
-}
-
-fn f64_to_f32(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().fdemote(types::F32, a)
-}
-
-fn float_to_i32(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().fcvt_to_sint(types::I32, a)
-}
-
-fn float_to_i64(a: Value, fbx: &mut FunctionBuilder) -> Value {
-    fbx.ins().fcvt_to_sint(types::I64, a)
-}
-
 fn translate_binary_op(
     op: BinaryOperation,
     lhs: &mantis_expression::node::Node,
@@ -46,7 +21,7 @@ fn translate_binary_op(
     ms_ctx: &mut MsContext,
     fbx: &mut FunctionBuilder<'_>,
     module: &mut ObjectModule,
-) -> MsVal {
+) -> NodeResult {
     match op {
         BinaryOperation::Add => {
             let lhs = translate_node(lhs, ms_ctx, fbx, module);
@@ -61,10 +36,10 @@ fn translate_binary_op(
 
             match lhs.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(
+                    return NodeResult::Val(MsVal::new(
                         nty.add(lhs.value(fbx), rhs.value(fbx), fbx),
                         lhs.ty().clone(),
-                    )
+                    ))
                 }
                 _ => todo!(),
             };
@@ -82,10 +57,10 @@ fn translate_binary_op(
 
             match lhs.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(
+                    return NodeResult::Val(MsVal::new(
                         nty.sub(lhs.value(fbx), rhs.value(fbx), fbx),
                         lhs.ty().clone(),
-                    )
+                    ))
                 }
                 _ => todo!(),
             };
@@ -103,10 +78,10 @@ fn translate_binary_op(
 
             match lhs.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(
+                    return NodeResult::Val(MsVal::new(
                         nty.div(lhs.value(fbx), rhs.value(fbx), fbx),
                         lhs.ty().clone(),
-                    )
+                    ))
                 }
                 _ => todo!(),
             };
@@ -124,10 +99,10 @@ fn translate_binary_op(
 
             match lhs.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(
+                    return NodeResult::Val(MsVal::new(
                         nty.mult(lhs.value(fbx), rhs.value(fbx), fbx),
                         lhs.ty().clone(),
-                    )
+                    ))
                 }
                 _ => todo!(),
             };
@@ -151,10 +126,10 @@ fn translate_binary_op(
 
             match lhs.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(
+                    return NodeResult::Val(MsVal::new(
                         nty.compare(op, lhs.value(fbx), rhs.value(fbx), fbx),
                         lhs.ty().clone(),
-                    )
+                    ))
                 }
                 _ => todo!(),
             };
@@ -171,16 +146,25 @@ fn translate_binary_op(
             }
 
             match l {
-                Either::Left(_) => panic!("Can't assign to Value {:?} of type {:?}", lhs, l),
-                Either::Right(var) => match var.ty {
+                NodeResult::Var(var) => match var.ty {
                     MsType::Native(nty) => {
                         let val = r.value(fbx);
                         fbx.def_var(var.c_var, val);
 
-                        return MsVal::new(val, var.ty);
+                        return NodeResult::Val(MsVal::new(val, var.ty));
                     }
                     _ => todo!(),
                 },
+                NodeResult::Val(_) => panic!("Value can't be assigned by another value"),
+                NodeResult::StructAccessVar { ptr, offset } => {
+                    let rvalue = r.value(fbx);
+                    let pvalue = ptr.value();
+                    let inst = fbx
+                        .ins()
+                        .store(MemFlags::new(), rvalue, pvalue, offset as i32);
+
+                    return NodeResult::Val(MsVal::new(rvalue, r.ty().clone()));
+                }
             }
         }
 
@@ -197,7 +181,10 @@ fn translate_binary_op(
 
             match l.ty() {
                 MsType::Native(nty) => {
-                    return MsVal::new(nty.cast_to(l.value(fbx), r, fbx), r.clone())
+                    return NodeResult::Val(MsVal::new(
+                        nty.cast_to(l.value(fbx), r, fbx),
+                        r.clone(),
+                    ))
                 }
                 _ => todo!(),
             }
@@ -234,10 +221,34 @@ fn translate_binary_op(
                     .expect("Undeclared function");
 
                 log::info!("Calling {} with signature {:?}", fn_name, signature);
-                return MsVal::new(value, signature.rets.clone());
+                return NodeResult::Val(MsVal::new(value, signature.rets.clone()));
             }
         }
-        BinaryOperation::Access => todo!(),
+        BinaryOperation::Access => {
+            let lhs = translate_node(lhs, ms_ctx, fbx, module);
+
+            match lhs.ty() {
+                MsType::Struct(st) => {
+                    let MsNode::Var(MantisLexerTokens::Word(field_name)) = rhs else {
+                        panic!("No Field Name on rhs {:?}", rhs);
+                    };
+
+                    let field = st.get_field(&field_name).expect("Undefined field name");
+                    // let value = fbx.ins().load(
+                    //     field.ty.to_cl_type().unwrap(),
+                    //     MemFlags::new(),
+                    //     ptr,
+                    //     field.offset as i32,
+                    // );
+
+                    return NodeResult::StructAccessVar {
+                        ptr: MsVal::new(lhs.value(fbx), field.ty.clone()),
+                        offset: field.offset as u32,
+                    };
+                }
+                _ => panic!("What we accessing if not struct?"),
+            }
+        }
         BinaryOperation::Empty => todo!(),
     }
 
@@ -266,24 +277,57 @@ impl Either<MsVal, MsVar> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum NodeResult {
+    Val(MsVal),
+    Var(MsVar),
+    StructAccessVar { ptr: MsVal, offset: u32 },
+}
+
+impl NodeResult {
+    pub fn value(&self, fbx: &mut FunctionBuilder) -> Value {
+        match self {
+            NodeResult::Val(val) => val.value,
+            NodeResult::Var(var) => fbx.use_var(var.c_var),
+            NodeResult::StructAccessVar { ptr, offset } => {
+                let value = ptr.value();
+                fbx.ins().load(
+                    ptr.ty.to_cl_type().unwrap(),
+                    MemFlags::new(),
+                    value,
+                    *offset as i32,
+                )
+            }
+        }
+    }
+
+    pub fn ty(&self) -> &MsType {
+        match self {
+            NodeResult::Val(val) => &val.ty,
+            NodeResult::Var(var) => &var.ty,
+            NodeResult::StructAccessVar { ptr, offset } => &ptr.ty,
+        }
+    }
+}
+
 pub fn translate_node(
     node: &MsNode,
     ms_ctx: &mut MsContext,
     fbx: &mut FunctionBuilder<'_>,
     module: &mut ObjectModule,
-) -> Either<MsVal, MsVar> {
+) -> NodeResult {
     use mantis_expression::node::Node;
 
     match node {
         Node::Binary(op, lhs, rhs) => {
-            return Either::Left(translate_binary_op(
+            return translate_binary_op(
                 op.clone(),
                 lhs.as_ref(),
                 rhs.as_ref(),
                 ms_ctx,
                 fbx,
                 module,
-            ));
+            );
         }
         Node::Var(var_token) => {
             match var_token {
@@ -293,18 +337,18 @@ pub fn translate_node(
                         .get_variable(var_name)
                         .expect("Undeclared variable");
 
-                    return Either::Right(MsVar::new(var.ty.clone(), var.c_var));
+                    return NodeResult::Var(MsVar::new(var.ty.clone(), var.c_var));
                 }
                 MantisLexerTokens::Integer(int) => {
                     let val = fbx.ins().iconst(types::I64, *int);
                     let ty = MsType::Native(MsNativeType::I64);
-                    return Either::Left(MsVal::new(val, ty));
+                    return NodeResult::Val(MsVal::new(val, ty));
                 }
 
                 MantisLexerTokens::Float(float) => {
                     let val = fbx.ins().f64const(*float);
                     let ty = MsType::Native(MsNativeType::F64);
-                    return Either::Left(MsVal::new(val, ty));
+                    return NodeResult::Val(MsVal::new(val, ty));
                 }
 
                 MantisLexerTokens::String(s) => {
@@ -332,5 +376,5 @@ pub fn translate_node(
 
     let null = fbx.ins().null(types::I32);
     log::info!("Somewhere we got null {:?}", node);
-    Either::Left(MsVal::new(null, MsType::Native(MsNativeType::Void)))
+    NodeResult::Val(MsVal::new(null, MsType::Native(MsNativeType::Void)))
 }
