@@ -1,27 +1,14 @@
 use std::ops::Deref;
 
 use mantis_tokens::MantisLexerTokens;
-use node::{BinaryOperation, Node};
+use node::{BinaryOperation, Node, UnaryOperation};
 
 pub mod node;
-
-/*
-
-Example expressions
-
-let a = 10;
-let b = (a + 10) * 3;
-let c = add(a, b);
-let f = malloc(6);
-f.a.b();
-f.a.c = f.a.c + 1;
-
-*/
 
 #[test]
 fn test_ast_parsing() {
     use logos::Logos;
-    let s = "(a + b) * c = 1 + (t.d as int)";
+    let s = "@((a + b) * c) = 1 + (t.d as int)";
     // let s = "(a + b)";
     let tokens = MantisLexerTokens::lexer(s)
         .collect::<Result<Vec<_>, _>>()
@@ -51,6 +38,16 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
         let c = &tokens[i];
 
         match c {
+
+            MantisLexerTokens::PointerAccess => {
+                let operation = UnaryOperation::Address;
+                let (rhs, consumed) = parse(&tokens[i + 1..])?;
+                println!("{:?}\n{:?}", &tokens[i+1..], rhs);
+                i += consumed + 1;
+                current_node = Node::Unary(operation, Box::new(rhs));
+                // return Ok((current_node, i));
+            }
+            
             MantisLexerTokens::Add
             | MantisLexerTokens::Sub
             | MantisLexerTokens::Multiply
@@ -163,6 +160,7 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
                         return Ok((current_node, i));
                     }
                     Node::Tuple(_) => todo!(),
+                    Node::Unary(_, _) => todo!(),
                 };
             }
 
@@ -194,6 +192,7 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
                     );
                     current_node = Node::Expr(Box::new(current_node));
                 }
+                Node::Unary(_, _) => todo!(),
             },
 
             MantisLexerTokens::Comma => {
@@ -217,6 +216,7 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
                    return Err(anyhow::anyhow!("Node::EXpr Not implemented, the current token {:?} and index {i} of {:?} = {:?}, current_node: {:?}", c, tokens, tokens[i], current_node))
                 }
                 Node::Tuple(_) => todo!(),
+                Node::Unary(_, _) => todo!(),
             },
         }
         i += 1;
@@ -260,7 +260,9 @@ fn add_node_to_left_most_child(parent: &mut Node, lhs: Node, operator: BinaryOpe
                     // can we avoid this clone?
                 }
 
-                _ => {}
+                _ => {
+                    println!("WARN doing nothing in case of parent {:?}", parent);
+                }
             };
         }
     };

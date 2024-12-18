@@ -352,7 +352,8 @@ pub fn translate_node(
                 }
 
                 MantisLexerTokens::String(s) => {
-                    if let Some(FuncOrDataId::Data(data_id)) = module.get_name(s) {
+                    let data_id = if let Some(FuncOrDataId::Data(data_id)) = module.get_name(s) {
+                        data_id
                     } else {
                         let data_id = module
                             .declare_data(s, Linkage::Local, false, false)
@@ -361,11 +362,15 @@ pub fn translate_node(
                         data_description.define(s.as_bytes().into());
                         module.define_data(data_id, &data_description);
 
-                        let gl_value = module.declare_data_in_func(data_id, fbx.func);
-                        let val = fbx.ins().global_value(types::I64, gl_value);
+                        // let gl_value = module.declare_data_in_func(data_id, fbx.func);
+                        // let val = fbx.ins().global_value(types::I64, gl_value);
 
-                        let st = ms_ctx.type_registry.get("array").unwrap();
-                    }
+                        // let st = ms_ctx.type_registry.get("array").unwrap();
+                        data_id
+                    };
+
+                    let gl_value = module.declare_data_in_func(data_id, fbx.func);
+                    ms_ctx.type_registry.get("array").unwrap().clone();
                 }
                 _ => panic!("Unsupported variable token {:?}", var_token),
             };

@@ -1,13 +1,20 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use cranelift::prelude::{types, AbiParam, FunctionBuilder, InstBuilder};
 use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use linear_map::LinearMap;
 
-use crate::frontend::compile::MsContext;
+use crate::{frontend::compile::MsContext, native::instructions::Either};
 
-use super::{types::MsType, variable::MsVal, MsRegistry};
+use super::{
+    types::{MsGenericTemplate, MsGenericType, MsType},
+    variable::MsVal,
+    MsRegistry,
+};
 
 #[derive(Debug, Clone)]
 pub struct MsStructFieldValue {
@@ -86,9 +93,31 @@ impl MsStructType {
 
 pub fn array_struct() -> MsStructType {
     let mut st = MsStructType::default();
-
     st.add_field("size", MsType::Native(super::types::MsNativeType::U64));
     st.add_field("ptr", MsType::Native(super::types::MsNativeType::U64));
+    return st;
+}
 
+pub fn pointer_template() -> MsGenericTemplate {
+    let mut st = MsGenericTemplate::default();
+    st.add_generic("T");
+    st.add_field(
+        "ptr",
+        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+    );
+    st
+}
+
+pub fn array_template() -> MsGenericTemplate {
+    let mut st = MsGenericTemplate::default();
+    st.add_generic("T");
+    st.add_field(
+        "size",
+        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+    );
+    st.add_field(
+        "ptr",
+        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+    );
     return st;
 }

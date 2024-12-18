@@ -1,18 +1,19 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     rc::Rc,
 };
 
 use codegen::ir::{condcodes, Inst};
 use cranelift::prelude::*;
 use cranelift_object::ObjectModule;
+use linear_map::{set::LinearSet, LinearMap};
 use mantis_expression::node::{BinaryOperation, Node};
 
-use crate::frontend::compile::MsContext;
+use crate::{frontend::compile::MsContext, native::instructions::Either};
 
 use super::{
     functions::MsFunctionType,
-    structs::{array_struct, MsStructType},
+    structs::{array_struct, pointer_template, MsStructType},
     MsRegistry, MsRegistryExt,
 };
 
@@ -297,23 +298,63 @@ pub fn binary_cmp_op_to_condcode_intcc(op: BinaryOperation, signed: bool) -> con
 
 #[derive(Clone, Debug)]
 pub struct MsGenericType {
-    generic_type: MsType,
-    generic_map: BTreeMap<String, MsType>,
+    pub generics: Vec<String>,
+    pub generic_map: BTreeMap<String, String>, // field ->  type_name
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MsGenericTemplate {
+    generics: Vec<String>,
+    generic_map: LinearMap<String, Either<MsType, String>>, // field ->  type_name
+}
+
+impl MsGenericTemplate {
+    pub fn add_generic(&mut self, s: impl Into<String>) {
+        let s: String = s.into();
+        assert!(!self.generics.contains(&s));
+        self.generics.push(s);
+    }
+
+    pub fn add_field(&mut self, field_name: impl Into<String>, field_type: Either<MsType, String>) {
+        self.generic_map.insert(field_name.into(), field_type);
+    }
+
+    pub fn to_struct(&self, generics: &BTreeMap<String, MsType>) -> MsStructType {
+        assert!(self.generics.len() == generics.len());
+
+        let mut st = MsStructType::default();
+
+        for (k, v) in &self.generic_map {
+            let ty = match v {
+                Either::Left(ty) => ty,
+                Either::Right(gen) => generics.get(gen).expect("Missing generic type"),
+            };
+
+            match ty {
+                MsType::Native(nty) => st.add_field(k, MsType::Native(*nty)),
+                MsType::Struct(field) => {
+                    st.add_field(k, MsType::Struct(field.clone()));
+                }
+                MsType::Generic(gen) => {
+                    let field = gen.to_struct(generics);
+                    st.add_field(k, MsType::Struct(Rc::new(field)));
+                }
+            };
+        }
+        st
+    }
 }
 
 #[derive(Clone, Debug)]
 pub enum MsType {
-    Function(Rc<MsFunctionType>),
-    Generic(Rc<MsGenericType>),
     Native(MsNativeType),
     Struct(Rc<MsStructType>),
+    Generic(Rc<MsGenericTemplate>),
 }
 
 impl MsType {
     pub fn equal(&self, ty: &MsType) -> bool {
         match (self, ty) {
-            (MsType::Function(t0), MsType::Function(t1)) => Rc::ptr_eq(t0, t1),
-            (MsType::Generic(t0), MsType::Generic(t1)) => Rc::ptr_eq(t0, t1),
             (MsType::Native(t0), MsType::Native(t1)) => t0 == t1,
             (MsType::Struct(t0), MsType::Struct(t1)) => Rc::ptr_eq(t0, t1),
             _ => false,
@@ -324,9 +365,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.size(),
             MsType::Struct(ty) => ty.size(),
-            // MsType::Function(ty) => ty.size(),
-            // MsType::Generic(ty) => ty.size(),
-            _ => todo!(),
+            MsType::Generic(_) => todo!(),
         }
     }
 
@@ -334,9 +373,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.align(),
             MsType::Struct(ty) => ty.align(),
-            // MsType::Function(ty) => ty.align(),
-            // MsType::Generic(ty) => ty.align(),
-            _ => todo!(),
+            MsType::Generic(_) => todo!(),
         }
     }
 
@@ -344,7 +381,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.to_abi_param(),
             MsType::Struct(ty) => Some(ty.to_abi_param()),
-            _ => todo!(),
+            MsType::Generic(_) => todo!(),
         }
     }
 
@@ -352,7 +389,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.to_cl_type(),
             MsType::Struct(ty) => todo!(),
-            _ => todo!(),
+            MsType::Generic(_) => todo!(),
         }
     }
 }
@@ -372,6 +409,8 @@ impl MsRegistry<MsType> for MsTypeRegistry {
     }
 }
 
+impl MsRegistryExt<MsType> for MsTypeRegistry {}
+
 impl Default for MsTypeRegistry {
     fn default() -> Self {
         let mut registry = HashMap::<String, MsType>::with_capacity(512);
@@ -385,12 +424,62 @@ impl Default for MsTypeRegistry {
         registry.insert("u64".into(), MsType::Native(MsNativeType::U64));
         registry.insert("f32".into(), MsType::Native(MsNativeType::F32));
         registry.insert("f64".into(), MsType::Native(MsNativeType::F64));
-        // registry.insert("str".into(), MsType::Native(MsNativeType::Array));
         registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
-        registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
+        // registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
+
+        let pointer_ty = pointer_template();
+
+        {
+            let mut generics = BTreeMap::new();
+            generics.insert("T".into(), MsType::Native(MsNativeType::Void));
+            registry.insert(
+                "pointer[void]".into(),
+                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            );
+            generics.insert("T".into(), MsType::Native(MsNativeType::I64));
+            registry.insert(
+                "pointer[i64]".into(),
+                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            );
+            generics.insert("T".into(), MsType::Native(MsNativeType::F64));
+            registry.insert(
+                "pointer[f64]".into(),
+                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            );
+            generics.insert("T".into(), MsType::Native(MsNativeType::U8));
+            registry.insert(
+                "pointer[u8]".into(),
+                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            );
+        }
+
+        registry.insert("pointer".into(), MsType::Generic(Rc::new(pointer_ty)));
+
+        // registry.insert("str".into(), MsType::Native(MsNativeType::Array));
 
         Self { registry }
     }
 }
+#[derive(Debug)]
+pub struct MsTemplateRegistry {
+    registry: HashMap<String, MsGenericTemplate>,
+}
 
-impl MsRegistryExt<MsType> for MsTypeRegistry {}
+impl MsRegistry<MsGenericTemplate> for MsTemplateRegistry {
+    fn get_registry(&self) -> &HashMap<String, MsGenericTemplate> {
+        &self.registry
+    }
+
+    fn get_registry_mut(&mut self) -> &mut HashMap<String, MsGenericTemplate> {
+        &mut self.registry
+    }
+}
+impl MsRegistryExt<MsGenericTemplate> for MsTemplateRegistry {}
+
+impl Default for MsTemplateRegistry {
+    fn default() -> Self {
+        let mut registry = HashMap::<String, MsGenericTemplate>::with_capacity(512);
+
+        Self { registry }
+    }
+}

@@ -215,10 +215,16 @@ pub enum Value {
     Variable(Variable),
 }
 
+#[derive(Clone, Debug, Copy)]
+pub enum UnaryOperation {
+    Address,
+}
+
 #[derive(Clone, Debug)]
 pub enum Node {
     None,
     Binary(BinaryOperation, Box<Node>, Box<Node>),
+    Unary(UnaryOperation, Box<Node>),
     Var(MantisLexerTokens),
     Tuple(Vec<Node>),
     Expr(Box<Node>),

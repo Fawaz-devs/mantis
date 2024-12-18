@@ -7,18 +7,17 @@ struct Foo {
 
 
 fn main(argv: i32, argc: i64) i32 {
-	let f = Foo;
 
-	// f.a = 10;
-	// f.b = 20;
-	// f.c = 3.14;
+	let f = #init(Foo);
+	f.a = 20;
+	f.b = 40;
+	f.c = 4.2;
 
-
-	// f.a = f.a + 1;
-	// let af = f.a as f64;
-	// f.c = f.c + af;
-
-	// let fc = f as f32;
+	// let f = Foo {
+	// 	a: 20,
+	// 	b: 30,
+	// 	c: 4.2,
+	// };
 
 	let o = f.a;
 

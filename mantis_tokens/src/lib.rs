@@ -19,8 +19,13 @@ pub enum MantisLexerTokens {
     #[regex(r"//[^\n]*", logos::skip)]
     Comment,
 
-    #[regex(r#"@[a-zA-Z_][a-zA-Z0-9_]*"#, |lex| lex.slice()[1..].to_owned())]
+    #[regex(r#"#[a-zA-Z_][a-zA-Z0-9_]*"#, |lex| lex.slice()[1..].to_owned())]
     CompilerFunction(String),
+
+    // #[regex(r#"@[a-zA-Z_][a-zA-Z0-9_]*"#, |lex| lex.slice()[1..].to_owned())]
+    // Pointer(String),
+    #[token("@")]
+    PointerAccess,
 
     #[token("return")]
     Return,
