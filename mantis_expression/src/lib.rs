@@ -8,7 +8,7 @@ pub mod node;
 #[test]
 fn test_ast_parsing() {
     use logos::Logos;
-    let s = "@((a + b) * c) = 1 + (t.d as int)";
+    let s = "#set(((a + b) * c), 1 + (t.d as int))";
     // let s = "(a + b)";
     let tokens = MantisLexerTokens::lexer(s)
         .collect::<Result<Vec<_>, _>>()
@@ -39,14 +39,14 @@ fn parse(tokens: &[MantisLexerTokens]) -> anyhow::Result<(Node, usize)> {
 
         match c {
 
-            MantisLexerTokens::PointerAccess => {
-                let operation = UnaryOperation::Address;
-                let (rhs, consumed) = parse(&tokens[i + 1..])?;
-                println!("{:?}\n{:?}", &tokens[i+1..], rhs);
-                i += consumed + 1;
-                current_node = Node::Unary(operation, Box::new(rhs));
-                // return Ok((current_node, i));
-            }
+            // MantisLexerTokens::PointerAccess => {
+            //     let operation = UnaryOperation::Address;
+            //     let (rhs, consumed) = parse(&tokens[i + 1..])?;
+            //     println!("{:?}\n{:?}", &tokens[i+1..], rhs);
+            //     i += consumed + 1;
+            //     current_node = Node::Unary(operation, Box::new(rhs));
+            //     // return Ok((current_node, i));
+            // }
             
             MantisLexerTokens::Add
             | MantisLexerTokens::Sub
