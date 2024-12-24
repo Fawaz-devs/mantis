@@ -4,6 +4,7 @@ use mantis_tokens::MantisLexerTokens;
 use node::{BinaryOperation, Node, UnaryOperation};
 
 pub mod node;
+pub mod pratt;
 
 #[test]
 fn test_ast_parsing() {

@@ -1,0 +1,39 @@
+WHITESPACE = _{ " " | "\t" | "\n" }
+
+// operator    =  { "=" |"!=" |">" |"<" |"<=" |">=" | "==" | "+" | "-" | "*" | "/" | "@" | "." }
+// expression  =  { term ~ (operator ~ term)* }
+// function_call = { identifier ~ "(" ~ expression_list ~ ")" }
+// identifier     =  { ASCII_ALPHANUMERIC+ }
+// term           =  { identifier | function_call }
+
+
+
+program      =   { SOI ~ expr ~ EOI }
+  expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
+    infix    =  _{ add | sub | mul | div | pow | eq | not_eq | gt_eq | le_eq | le | ge | dot }
+      add    =   { "+" }
+      sub    =   { "-" }
+      mul    =   { "*" }
+      div    =   { "/" }
+      pow    =   { "^" }
+      eq     =   { "==" }
+      not_eq =   { "!=" }
+      gt_eq  =   { ">=" }
+      le_eq  =   { "<=" }
+      le     =   { "<" }
+      ge     =   { ">" }
+      dot    =   { "." }
+    prefix   =  _{ neg | at }
+      neg    =   { "-" } 
+      at     =   { "@" } 
+    postfix  =  _{ fac | expr_call }
+      fac    =   { "!" } 
+      expr_call =  { "()" | ( "(" ~ expr_list ~ ")" ) }
+    primary  =  _{  float | int | word | "(" ~ expr ~ ")"  }
+      // ident  =  @{ int | float | word } 
+      int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
+      float  =  @{ int ~ "." ~ int } 
+      word   =  @{ ASCII_ALPHANUMERIC+ }
+      // fn_call =  { word ~ "(" ~ ( expr_list | "" ) ~ ")" }
+      expr_list = { expr ~ ("," ~ expr)* }
+
