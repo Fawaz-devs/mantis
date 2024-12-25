@@ -12,3 +12,4 @@ mantis_tokens = { path = "../mantis_tokens" }
 smallstring = "0.1.2"
 pest = "2.7.15"
 pest_derive = "2.7.15"
+linear-map = "1.2.0"

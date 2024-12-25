@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use linear_map::LinearMap;
 use pest::{
     iterators::{Pair, Pairs},
     pratt_parser::{Assoc, Op, PrattParser},
@@ -13,6 +14,8 @@ pub struct ExpressionParser;
 
 #[derive(Debug)]
 pub enum Term {
+    Char(char),
+    String(Box<str>),
     Ident(Box<str>),
     I64(i64),
     F64(f64),
@@ -39,20 +42,22 @@ pub enum Statement {
 
 #[derive(Debug)]
 pub enum Block {
-    Scoped(Vec<Statement>),
+    Closed(Vec<Statement>),
+    Opened(Vec<Statement>),
+    Continuos(Vec<Block>),
     If(Node, Box<Block>),
     Elif(Node, Box<Block>),
     Else(Box<Block>),
-    Loop(Box<Block>),
+    Loop(Box<str>, Box<Block>),
 }
 
 #[derive(Debug)]
 pub enum Type {
     Enum {
-        fields: HashMap<Box<str>, Vec<Type>>,
+        fields: LinearMap<Box<str>, Vec<Type>>,
     },
     Struct {
-        fields: HashMap<Box<str>, Type>,
+        fields: LinearMap<Box<str>, Type>,
     },
     WithGenerics(Box<str>, Vec<Type>),
     Word(Box<str>),
@@ -65,7 +70,7 @@ pub struct TypeDecl {
 
 #[derive(Debug)]
 pub enum Declaration {
-    Function(Box<str>, Block),
+    Function(Type, LinearMap<Box<str>, Type>, Type, Block),
     Type(Type, Type),
     // Struct(Box<str>, HashMap<Box<str>, Type>),
 }
@@ -73,6 +78,13 @@ pub enum Declaration {
 fn get_pratt_parser() -> PrattParser<Rule> {
     let pratt = PrattParser::new()
         .op(Op::infix(Rule::assign, Assoc::Right))
+        .op(Op::infix(Rule::eq, Assoc::Left)
+            | Op::infix(Rule::eq, Assoc::Left)
+            | Op::infix(Rule::not_eq, Assoc::Left)
+            | Op::infix(Rule::ge, Assoc::Left)
+            | Op::infix(Rule::le, Assoc::Left)
+            | Op::infix(Rule::le_eq, Assoc::Left)
+            | Op::infix(Rule::gt_eq, Assoc::Left))
         .op(Op::infix(Rule::add, Assoc::Left) | Op::infix(Rule::sub, Assoc::Left))
         .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
         .op(Op::infix(Rule::pow, Assoc::Right))
@@ -80,7 +92,6 @@ fn get_pratt_parser() -> PrattParser<Rule> {
         .op(Op::prefix(Rule::neg))
         .op(Op::infix(Rule::cast, Assoc::Right))
         .op(Op::prefix(Rule::at))
-        .op(Op::postfix(Rule::fac))
         .op(Op::infix(Rule::dot, Assoc::Left));
 
     pratt
@@ -101,6 +112,14 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             Rule::int => Node::Term(Term::I64(primary.as_str().parse::<i64>().unwrap())),
             Rule::float => Node::Term(Term::F64(primary.as_str().parse::<f64>().unwrap())),
             Rule::word => Node::Term(Term::Ident(primary.as_str().into())),
+            Rule::string_literal => Node::Term(Term::String(primary.as_str().into())),
+            Rule::char => {
+                let c = primary.as_str();
+                let c = &c[1..c.len() - 1];
+                let c = c.chars().next().unwrap();
+
+                Node::Term(Term::Char(c))
+            }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -119,11 +138,17 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             | Rule::pow
             | Rule::dot
             | Rule::assign
+            | Rule::eq
+            | Rule::not_eq
+            | Rule::gt_eq
+            | Rule::ge
+            | Rule::le_eq
+            | Rule::le
             | Rule::cast => Node::Binary(op.as_rule(), lhs.into(), rhs.into()),
             _ => unreachable!(),
         })
         .map_postfix(|lhs, op| match op.as_rule() {
-            Rule::fac => Node::Unary(Rule::fac, lhs.into()),
+            // Rule::fac => Node::Unary(Rule::fac, lhs.into()),
             Rule::expr_call => {
                 let args = if let Some(pair) = op.into_inner().into_iter().next() {
                     parse_expr_list(pair, pratt)
@@ -152,6 +177,47 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
 
                 Declaration::Type(name, ty)
             }
+
+            Rule::fn_decl => {
+                let mut iter = primary.into_inner().into_iter();
+                let mut next = iter.next().unwrap();
+                let fn_name = parse_type(Pairs::single(next), pratt);
+
+                next = iter.next().unwrap();
+
+                let args = if matches!(next.as_rule(), Rule::typed_args_list) {
+                    let args = next;
+                    next = iter.next().unwrap();
+                    parse_typed_args(args, pratt)
+                } else {
+                    LinearMap::new()
+                };
+
+                let return_ty = if matches!(next.as_rule(), Rule::type_name) {
+                    let ret_ty = next;
+                    next = iter.next().unwrap();
+                    parse_type(Pairs::single(ret_ty), pratt)
+                } else {
+                    Type::Word("void".into())
+                };
+
+                // let mut blocks = Vec::new();
+                let mut block = Block::Opened(Vec::new());
+
+                if matches!(next.as_rule(), Rule::block) {
+                    loop {
+                        block = parse_block(next, pratt);
+                        if let Some(next_block) = iter.next() {
+                            next = next_block;
+                        } else {
+                            break;
+                        }
+                    }
+                };
+
+                Declaration::Function(fn_name, args, return_ty, block)
+            }
+
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -159,6 +225,127 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
             ),
         })
         .parse(pairs)
+}
+
+fn parse_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Block {
+    let mut blocks = Vec::new();
+    for pair in pair.into_inner().into_iter() {
+        match pair.as_rule() {
+            Rule::stmts => {
+                let mut statements = Vec::new();
+                for pair in pair.into_inner().into_iter() {
+                    statements.push(parse_statement(pair, pratt))
+                }
+
+                blocks.push(Block::Opened(statements));
+            }
+            Rule::if_block => {
+                let mut iter = pair.into_inner().into_iter();
+                let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
+                let block = parse_block(iter.next().unwrap(), pratt);
+                blocks.push(Block::If(expr, block.into()));
+            }
+            Rule::elif_block => {
+                let mut iter = pair.into_inner().into_iter();
+                let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
+                let block = parse_block(iter.next().unwrap(), pratt);
+                blocks.push(Block::Elif(expr, block.into()));
+            }
+            Rule::else_block => {
+                let mut iter = pair.into_inner().into_iter();
+                let block = parse_block(iter.next().unwrap(), pratt);
+                blocks.push(Block::Else(block.into()));
+            }
+
+            Rule::loop_block => {
+                let mut iter = pair.into_inner().into_iter();
+                let mut next = iter.next().unwrap();
+                let loop_name = if matches!(next.as_rule(), Rule::word) {
+                    let ln = next.as_str().into();
+                    next = iter.next().unwrap();
+                    ln
+                } else {
+                    "".into()
+                };
+
+                let block = parse_block(next, pratt);
+                blocks.push(Block::Loop(loop_name, block.into()));
+            }
+
+            _ => unreachable!("{:#?}", pair),
+        }
+    }
+
+    if blocks.len() == 1 {
+        return blocks.pop().unwrap();
+    } else {
+        return Block::Continuos(blocks);
+    }
+}
+
+fn parse_statement(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Statement {
+    let inner = pair.into_inner().next().unwrap();
+    let result = match inner.as_rule() {
+        Rule::let_stmt => {
+            let mut iter = inner.into_inner().into_iter();
+            let lhs = iter.next().unwrap().as_str();
+            let mut next = iter.next().unwrap();
+            let mut ty = Type::Word("unknown".into());
+            if matches!(next.as_rule(), Rule::type_name) {
+                ty = parse_type(Pairs::single(next), pratt);
+                next = iter.next().unwrap();
+            }
+            let rhs = parse_expr(Pairs::single(next), pratt);
+            _ = ty; // TODO: use this for casting
+            Statement::Let(lhs.into(), rhs)
+        }
+        Rule::ret_stmt => {
+            let expr = inner.into_inner().next().unwrap();
+            let expr = parse_expr(Pairs::single(expr), pratt);
+            Statement::Return(expr)
+        }
+        Rule::break_stmt => {
+            let word = inner
+                .into_inner()
+                .into_iter()
+                .next()
+                .map(|x| x.as_str().into())
+                .unwrap_or("".into());
+
+            Statement::Break(word)
+        }
+        Rule::continue_stmt => {
+            let word = inner
+                .into_inner()
+                .into_iter()
+                .next()
+                .map(|x| x.as_str().into())
+                .unwrap_or("".into());
+
+            Statement::Continue(word)
+        }
+        Rule::expr => Statement::Expr(parse_expr(Pairs::single(inner), pratt)),
+        _ => unreachable!(),
+    };
+    result
+}
+
+fn parse_typed_args(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> LinearMap<Box<str>, Type> {
+    if !(matches!(pair.as_rule(), Rule::typed_args_list)) {
+        panic!("{:#?}", pair);
+    }
+
+    let mut map = LinearMap::new();
+
+    for pair in pair.into_inner() {
+        let mut typed_arg = pair.into_inner().into_iter();
+        let arg_name = typed_arg.next().unwrap();
+        let arg_type = typed_arg.next().unwrap();
+        let arg_type = parse_type(Pairs::single(arg_type), pratt);
+        map.insert(arg_name.as_str().into(), arg_type);
+    }
+
+    map
 }
 
 fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
@@ -182,14 +369,7 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
             Rule::struct_decl => {
                 let mut iter = primary.into_inner().into_iter();
                 let typed_args_list = iter.next().unwrap();
-                let mut map = HashMap::<Box<str>, Type>::new();
-                for pair in typed_args_list.into_inner() {
-                    let mut typed_arg = pair.into_inner().into_iter();
-                    let arg_name = typed_arg.next().unwrap();
-                    let arg_type = typed_arg.next().unwrap();
-                    let arg_type = parse_type(Pairs::single(arg_type), pratt);
-                    map.insert(arg_name.as_str().into(), arg_type);
-                }
+                let map = parse_typed_args(typed_args_list, pratt);
 
                 Type::Struct { fields: map }
             }
@@ -202,7 +382,7 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                     .unwrap()
                     .into_inner();
 
-                let mut map = HashMap::<Box<str>, Vec<Type>>::new();
+                let mut map = LinearMap::<Box<str>, Vec<Type>>::new();
 
                 for enum_variant in enum_variants {
                     let mut iter = enum_variant.into_inner().into_iter();
@@ -215,29 +395,10 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                     }
                     map.insert(word.into(), args);
                 }
-                // for pair in typed_args_list.into_inner() {
-                //     dbg!(&pair);
-                //     if matches!(pair.as_rule(), Rule::word) {
-                //         map.insert(pair.as_str().into(), Vec::new());
-                //     } else {
-                //         let typed_arg = pair.into_inner();
-                //         dbg!(&typed_arg);
-                //         panic!()
-                // let arg_name = typed_arg.next().unwrap();
-                // let enum_variants = typed_arg.next().unwrap();
-                // dbg!(&enum_variants);
-                // let mut enum_children = Vec::new();
-                // for arg in enum_variants.into_inner() {
-                //     let child = parse_type(Pairs::single(arg), pratt);
-                //     enum_children.push(child);
-                // }
-
-                // map.insert(arg_name.as_str().into(), enum_children);
-                //     }
-                // }
 
                 Type::Enum { fields: map }
             }
+
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -257,7 +418,7 @@ fn parse_expr_list(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Vec<Node> {
         .collect::<Vec<_>>()
 }
 
-fn parse_block(input: &str) -> anyhow::Result<()> {
+fn parse_blocks(input: &str) -> anyhow::Result<()> {
     let pratt = get_pratt_parser();
     let pairs = ExpressionParser::parse(Rule::declarations, input)?;
     // let pairs = pairs.into_iter().next().unwrap().into_inner();
@@ -276,16 +437,21 @@ fn parse_block(input: &str) -> anyhow::Result<()> {
 
 #[test]
 fn test_pratt() {
-    // let inputs = [
-    //     // "g = a+1.2*70-c.d.e(0, 2).to_int().unwrap(7) *@f * foo(a+2.3, b as f64)",
-    //     "g = a as i32",
-    //     "g = a + b",
-    //     "g = @a.b as f64 + g() + f(a, b )",
-    // ];
-    // for input in inputs {
-    //     let node = pratt_parse(input).unwrap();
-    //     dbg!(node);
-    // }
+    let inputs = [
+        // "g = a+1.2*70-c.d.e(0, 2).to_int().unwrap(7) *@f * foo(a+2.3, b as f64)",
+        // "g = a as i32",
+        // "g = a + b",
+        // "g = @a.b as f64 + g() + f(a, b == 0)",
+        "a != b",
+        "g = a == b * 'd'",
+        r#"g = "hello wor\nld""#,
+    ];
+    for input in inputs {
+        let node = pratt_parse(input).unwrap();
+        dbg!(node);
+    }
+
+    panic!();
 
     let mut code = String::new();
     code += "type foo = struct { a i32, b f32 }\n";
@@ -294,7 +460,41 @@ fn test_pratt() {
     code += "type u32_ptr = ptr[u32]\n";
     code += "type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }\n";
 
-    parse_block(code.as_str()).unwrap();
+    code += "fn malloc(size i64) i64 extern\n";
+    code += "fn foo() i32 { return 74; }\n";
+    code += "fn main(argc i32, argv i64) i32 { let a = 29; mut b = 2 + a * 6; return a + b; }\n";
+
+    code += r#"
+        fn fibonacci(n i32) i32 {
+            let i = n;
+            if n == 0  {
+                return 0;
+            } elif n == 1 { 
+                return 1;
+            } else {
+                return fibonacci(n-1) + fibonacci(n - 2);
+            }
+        }
+    "#;
+
+    code += r#"
+    fn loop_test(n i32) {
+        let i = n;
+        loop my_loop {
+            println("{}", i);
+            i = i - 1;
+            if i < 0 {
+                break;
+            }
+        }
+    }
+
+        
+    "#;
+
+    println!("{code}");
+
+    parse_blocks(code.as_str()).unwrap();
 
     panic!()
 }

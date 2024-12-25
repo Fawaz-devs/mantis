@@ -1,16 +1,9 @@
-WHITESPACE = _{ " " | "\t" | "\n" }
-
-// operator    =  { "=" |"!=" |">" |"<" |"<=" |">=" | "==" | "+" | "-" | "*" | "/" | "@" | "." }
-// expression  =  { term ~ (operator ~ term)* }
-// function_call = { identifier ~ "(" ~ expression_list ~ ")" }
-// identifier     =  { ASCII_ALPHANUMERIC+ }
-// term           =  { identifier | function_call }
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT = _{  "//" ~ ANY* }
 
 
-
-// program      =   { SOI ~ expr ~ EOI }
   expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
-    infix    =  _{ assign | cast | add | sub | mul | div | pow | eq | not_eq | gt_eq | le_eq | le | ge | dot }
+    infix    =  _{ eq | assign | cast | add | sub | mul | div | pow | not_eq | gt_eq | le_eq | le | ge | dot }
       add    =   { "+" }
       sub    =   { "-" }
       mul    =   { "*" }
@@ -28,10 +21,9 @@ WHITESPACE = _{ " " | "\t" | "\n" }
     prefix   =  _{ neg | at }
       neg    =   { "-" } 
       at     =   { "@" } 
-    postfix  =  _{ fac | expr_call }
-      fac    =   { "!" } 
+    postfix  =  _{ expr_call }
       expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
-    primary  =  _{  float | int | word | "(" ~ expr ~ ")"  }
+    primary  =  _{  char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
       float  =  @{ int ~ "." ~ int } 
@@ -44,13 +36,18 @@ WHITESPACE = _{ " " | "\t" | "\n" }
       continue_stmt = { "continue" ~ word? }
       stmt = { ( let_stmt | ret_stmt | break_stmt | continue_stmt | expr ) ~ ";" }
       stmts = { stmt+ }
-      block = { "{" ~ (stmts | block | cond_block | loop_block )* ~ "}" }
+      block = { "{" ~ (cond_block | stmts | block | loop_block )* ~ "}" }
       type_name = { word ~ ("[" ~ type_list ~ "]")? }
       type_list = { type_name ~ ("," ~ type_name)* }
       typed_arg = { word ~ type_name }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
-      fn_decl = { "fn" ~ "extern"? ~ type_name ~ "(" ~ typed_args_list? ~ ")" ~ block? }
-      cond_block = { ("else" | (("if" | "elif") ~ expr)) ~ block }
+      extern_word = { "extern" }
+      fn_decl = { "fn" ~ type_name ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | extern_word) }
+      cond_block = _{ if_block | elif_block | else_block }
+      if_block = { "if" ~ expr ~ block }
+      elif_block = { "elif" ~ expr ~ block }
+      else_block = { "else" ~ block }
+      
       loop_block = { "loop" ~ word? ~ block }
       type_decl = { "type" ~ type_name ~ "=" ~ ( enum_decl | struct_decl | type_name  ) }
       struct_decl = { "struct" ~  "{" ~  typed_args_list ~ "}" }
@@ -59,4 +56,9 @@ WHITESPACE = _{ " " | "\t" | "\n" }
       enum_decl = { "enum" ~ "{" ~  enum_variants ~ "}" }
       declaration = _{ fn_decl | type_decl }
       declarations = { declaration* }
-      
+      trait_decl = { "trait" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
+      trait_impl = { "impl" ~ type_name ~ "for" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
+     
+      string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
+      char = @{ "'" ~ ANY ~ "'" }
+
