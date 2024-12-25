@@ -568,6 +568,7 @@ name = "mantis_expression"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "linear-map",
  "log",
  "logos",
  "mantis_tokens",

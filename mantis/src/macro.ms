@@ -1,5 +1,29 @@
 
-fn #vec[T](args: Vec[Arg[U]]) $Node
+/*
+
+#macro -> anything starts with # is a compile time function, most of the time is a macro
+$CompType -> anything starting with $ is a compile time only type, these types can't be used in runtime, they can only be used inside macros
+
+*/
+
+
+
+fn #add_two(a: $I64, b: $Any) $I64 {
+	match #type(b) {
+		i32 | i64 => {
+			return a + b;
+		},
+		f32 | f64 => {
+			return a + b.floor().to_int();
+		}
+	}
+
+
+	return a + b;
+}
+
+
+fn #vec[T](args: $Args[U]) Vec[T]
  U: Any + const Into[T] {
 	let v = Vec.with_capacity(args.len());
 
@@ -12,7 +36,7 @@ fn #vec[T](args: Vec[Arg[U]]) $Node
 		}
 	}
 
-	return $Node.var(v);
+	return v;
 }
 
 

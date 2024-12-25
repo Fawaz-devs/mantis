@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use linear_map::LinearMap;
 use pest::{
     iterators::{Pair, Pairs},

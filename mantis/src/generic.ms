@@ -5,6 +5,19 @@ struct Array[T] {
 	size: u64,
 }
 
+trait Into[f64] {
+	fn into(@self) f64;
+}
+
+
+impl Into[f64] for u64 {
+	fn into(@self) f64  {
+		self as f64	
+	}
+}
+
+
+
 
 fn main(argc: i32, argv: i64) i32 {
 	let size: u64 = 20 as u64;
