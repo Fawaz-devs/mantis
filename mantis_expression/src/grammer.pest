@@ -52,11 +52,11 @@ WHITESPACE = _{ " " | "\t" | "\n" }
       fn_decl = { "fn" ~ "extern"? ~ type_name ~ "(" ~ typed_args_list? ~ ")" ~ block? }
       cond_block = { ("else" | (("if" | "elif") ~ expr)) ~ block }
       loop_block = { "loop" ~ word? ~ block }
-      type_decl = { "type" ~ type_name ~ "=" ~ (struct_decl | enum_decl |  type_name) }
+      type_decl = { "type" ~ type_name ~ "=" ~ ( enum_decl | struct_decl | type_name  ) }
       struct_decl = { "struct" ~  "{" ~  typed_args_list ~ "}" }
       enum_variant = { word ~ ("(" ~ type_list ~ ")")? }
       enum_variants = { enum_variant ~ ( "," ~ enum_variant )* }
-      enum_decl = { "enum" ~  "{" ~  enum_variants ~ "}" }
+      enum_decl = { "enum" ~ "{" ~  enum_variants ~ "}" }
       declaration = _{ fn_decl | type_decl }
       declarations = { declaration* }
       

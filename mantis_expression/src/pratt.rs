@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use pest::{
     iterators::{Pair, Pairs},
@@ -48,7 +48,12 @@ pub enum Block {
 
 #[derive(Debug)]
 pub enum Type {
-    Struct { fields: HashMap<Box<str>, Type> },
+    Enum {
+        fields: HashMap<Box<str>, Vec<Type>>,
+    },
+    Struct {
+        fields: HashMap<Box<str>, Type>,
+    },
     WithGenerics(Box<str>, Vec<Type>),
     Word(Box<str>),
 }
@@ -146,20 +151,6 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
                 let ty = parse_type(Pairs::single(ty), pratt);
 
                 Declaration::Type(name, ty)
-
-                // match next.as_rule() {
-                //     Rule::struct_decl => {
-                //         let map = parse_struct_declaration(Pairs::single(next), pratt);
-                //         Declaration::Type(Type::Word(name.into()), Type::Struct { fields: map })
-                //     }
-                //     Rule::type_name => {
-                //         let ty = parse_type(Pairs::single(next), pratt);
-                //         Declaration::Type(Type::Word(name.into()), ty)
-                //     }
-                //     _ => unreachable!(),
-                // }
-
-                // let type_name = parse_type(Pairs::single(next), pratt);
             }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
@@ -169,50 +160,6 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
         })
         .parse(pairs)
 }
-
-// fn parse_struct_declaration(
-//     pairs: Pairs<Rule>,
-//     pratt: &PrattParser<Rule>,
-// ) -> HashMap<Box<str>, Type> {
-//     pratt
-//         .map_primary(|primary| match primary.as_rule() {
-//             Rule::struct_decl => {
-//                 let mut iter = primary.into_inner().into_iter();
-//                 let next = iter.next().unwrap();
-
-//                 if !matches!(next.as_rule(), Rule::typed_args_list) {
-//                     panic!("got {:?} instead of typed args list", next);
-//                 }
-
-//                 // if matches!(next.as_rule(), Rule::type_list) {
-//                 //     // generics
-//                 //     let mut generics = Vec::new();
-//                 // }
-
-//                 // let next = iter.next().unwrap();
-//                 assert_eq!(next.as_rule(), Rule::typed_args_list);
-//                 let typed_args_list = next;
-//                 let mut map = HashMap::<Box<str>, Type>::new();
-//                 for pair in typed_args_list.into_inner() {
-//                     let mut typed_arg = pair.into_inner().into_iter();
-//                     let arg_name = typed_arg.next().unwrap();
-//                     let arg_type = typed_arg.next().unwrap();
-//                     map.insert(
-//                         arg_name.as_str().into(),
-//                         parse_type(arg_type.into_inner(), pratt),
-//                     );
-//                 }
-
-//                 map
-//             }
-//             _ => unreachable!(
-//                 "Unhandled Rule {:?} {:?}",
-//                 primary.as_rule(),
-//                 primary.as_str()
-//             ),
-//         })
-//         .parse(pairs)
-// }
 
 fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
     pratt
@@ -227,8 +174,9 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                     }
 
                     return Type::WithGenerics(word.as_str().into(), generics);
+                } else {
+                    parse_type(Pairs::single(word), pratt)
                 }
-                parse_type(Pairs::single(word), pratt)
             }
             Rule::word => Type::Word(primary.as_str().into()),
             Rule::struct_decl => {
@@ -244,6 +192,51 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                 }
 
                 Type::Struct { fields: map }
+            }
+
+            Rule::enum_decl => {
+                let enum_variants = primary
+                    .into_inner()
+                    .into_iter()
+                    .next()
+                    .unwrap()
+                    .into_inner();
+
+                let mut map = HashMap::<Box<str>, Vec<Type>>::new();
+
+                for enum_variant in enum_variants {
+                    let mut iter = enum_variant.into_inner().into_iter();
+                    let word = iter.next().unwrap().as_str();
+                    let mut args = Vec::new();
+                    if let Some(type_list) = iter.next() {
+                        for type_name in type_list.into_inner().into_iter() {
+                            args.push(parse_type(Pairs::single(type_name), pratt));
+                        }
+                    }
+                    map.insert(word.into(), args);
+                }
+                // for pair in typed_args_list.into_inner() {
+                //     dbg!(&pair);
+                //     if matches!(pair.as_rule(), Rule::word) {
+                //         map.insert(pair.as_str().into(), Vec::new());
+                //     } else {
+                //         let typed_arg = pair.into_inner();
+                //         dbg!(&typed_arg);
+                //         panic!()
+                // let arg_name = typed_arg.next().unwrap();
+                // let enum_variants = typed_arg.next().unwrap();
+                // dbg!(&enum_variants);
+                // let mut enum_children = Vec::new();
+                // for arg in enum_variants.into_inner() {
+                //     let child = parse_type(Pairs::single(arg), pratt);
+                //     enum_children.push(child);
+                // }
+
+                // map.insert(arg_name.as_str().into(), enum_children);
+                //     }
+                // }
+
+                Type::Enum { fields: map }
             }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
@@ -299,11 +292,7 @@ fn test_pratt() {
     code += "type gen[T] = struct { a T, b ptr[T] }\n";
     code += "type doo = i32\n";
     code += "type u32_ptr = ptr[u32]\n";
-    code += "type Node[T] = enum {
-        None,
-        Binary(Op, T, T),
-        Unary(Op, T),
-    }\n";
+    code += "type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }\n";
 
     parse_block(code.as_str()).unwrap();
 
