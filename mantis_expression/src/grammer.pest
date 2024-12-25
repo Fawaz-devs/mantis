@@ -8,9 +8,9 @@ WHITESPACE = _{ " " | "\t" | "\n" }
 
 
 
-program      =   { SOI ~ expr ~ EOI }
+// program      =   { SOI ~ expr ~ EOI }
   expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
-    infix    =  _{ add | sub | mul | div | pow | eq | not_eq | gt_eq | le_eq | le | ge | dot }
+    infix    =  _{ assign | cast | add | sub | mul | div | pow | eq | not_eq | gt_eq | le_eq | le | ge | dot }
       add    =   { "+" }
       sub    =   { "-" }
       mul    =   { "*" }
@@ -23,17 +23,40 @@ program      =   { SOI ~ expr ~ EOI }
       le     =   { "<" }
       ge     =   { ">" }
       dot    =   { "." }
+      assign =   { "=" }
+      cast   =   { "as" }
     prefix   =  _{ neg | at }
       neg    =   { "-" } 
       at     =   { "@" } 
     postfix  =  _{ fac | expr_call }
       fac    =   { "!" } 
-      expr_call =  { "()" | ( "(" ~ expr_list ~ ")" ) }
+      expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
     primary  =  _{  float | int | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
       float  =  @{ int ~ "." ~ int } 
-      word   =  @{ ASCII_ALPHANUMERIC+ }
-      // fn_call =  { word ~ "(" ~ ( expr_list | "" ) ~ ")" }
+      word   =  @{ ("_" | ASCII_ALPHA) ~ ("_" | ASCII_ALPHANUMERIC)* }
       expr_list = { expr ~ ("," ~ expr)* }
 
+      let_stmt = { ("let" | "mut") ~ word ~ (":" ~ word)? ~ "=" ~ expr }
+      ret_stmt = { "return" ~ expr? }
+      break_stmt = { "break" ~ word? }
+      continue_stmt = { "continue" ~ word? }
+      stmt = { ( let_stmt | ret_stmt | break_stmt | continue_stmt | expr ) ~ ";" }
+      stmts = { stmt+ }
+      block = { "{" ~ (stmts | block | cond_block | loop_block )* ~ "}" }
+      type_name = { word ~ ("[" ~ type_list ~ "]")? }
+      type_list = { type_name ~ ("," ~ type_name)* }
+      typed_arg = { word ~ type_name }
+      typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
+      fn_decl = { "fn" ~ "extern"? ~ type_name ~ "(" ~ typed_args_list? ~ ")" ~ block? }
+      cond_block = { ("else" | (("if" | "elif") ~ expr)) ~ block }
+      loop_block = { "loop" ~ word? ~ block }
+      type_decl = { "type" ~ type_name ~ "=" ~ (struct_decl | enum_decl |  type_name) }
+      struct_decl = { "struct" ~  "{" ~  typed_args_list ~ "}" }
+      enum_variant = { word ~ ("(" ~ type_list ~ ")")? }
+      enum_variants = { enum_variant ~ ( "," ~ enum_variant )* }
+      enum_decl = { "enum" ~  "{" ~  enum_variants ~ "}" }
+      declaration = _{ fn_decl | type_decl }
+      declarations = { declaration* }
+      
