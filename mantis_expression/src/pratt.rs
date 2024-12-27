@@ -73,10 +73,23 @@ pub struct FunctionDecl {
 }
 
 #[derive(Debug)]
+pub enum ImportSymbols {
+    Everything,
+    Selected(Vec<Box<str>>),
+}
+
+#[derive(Debug)]
+pub struct ImportDecl {
+    alias: Box<str>,
+    path: Box<str>,
+    imports: ImportSymbols,
+}
+
+#[derive(Debug)]
 pub enum Declaration {
     Function(FunctionDecl),
     Type(Type, Type),
-    // Struct(Box<str>, HashMap<Box<str>, Type>),
+    Import(ImportDecl),
 }
 
 fn get_pratt_parser() -> PrattParser<Rule> {
@@ -93,6 +106,8 @@ fn get_pratt_parser() -> PrattParser<Rule> {
         .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
         .op(Op::infix(Rule::pow, Assoc::Right))
         .op(Op::postfix(Rule::expr_call))
+        .op(Op::postfix(Rule::propogate))
+        .op(Op::postfix(Rule::panic))
         .op(Op::prefix(Rule::neg))
         .op(Op::infix(Rule::cast, Assoc::Right))
         .op(Op::prefix(Rule::at))

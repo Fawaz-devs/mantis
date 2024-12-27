@@ -21,8 +21,12 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
     prefix   =  _{ neg | at }
       neg    =   { "-" } 
       at     =   { "@" } 
-    postfix  =  _{ expr_call }
+    postfix  =  _{ expr_call | propogate | panic }
       expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
+      propogate = { "?" }
+      panic = { "!" }
+
+
     primary  =  _{ fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
@@ -64,5 +68,6 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
       char = @{ "'" ~ ANY ~ "'" }
 
-      // anonymous_fn = { "fn" };
-
+      match_stmt = { "match" ~ expr ~ "{" ~ match_case+ ~ "}" }
+      match_case = { expr ~ ":" ~ block ~ "," }
+ 
