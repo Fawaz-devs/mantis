@@ -12,7 +12,6 @@ use lexer::lexer::Lexer;
 use registries::{functions::MsFunctionRegistry, types::MsTypeRegistry};
 
 use crate::{
-    backend::cranelift::compile_program,
     frontend::{
         compiler,
         tokenizer::read_to_tokens,
