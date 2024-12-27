@@ -8,7 +8,7 @@ $CompType -> anything starting with $ is a compile time only type, these types c
 
 
 
-fn #add_two(a: $I64, b: $Any) $I64 {
+fn #add_two(a $I64, b $Any) $I64 {
 	match #type(b) {
 		i32 | i64 => {
 			return a + b;
@@ -23,13 +23,13 @@ fn #add_two(a: $I64, b: $Any) $I64 {
 }
 
 
-fn #vec[T](args: $Args[U]) Vec[T]
- U: Any + const Into[T] {
+fn #vec[T](args $Args[U]) Vec[T] where
+ U: Any + Into[T] {
 	let v = Vec.with_capacity(args.len());
 
 	let idx = 0;
 	loop {
-		v.push(v.at(idx).into());
+		v.push(args.at(idx).into());
 		idx += 1;
 		if idx == args.len() {
 			break;
@@ -41,5 +41,7 @@ fn #vec[T](args: $Args[U]) Vec[T]
 
 
 fn main() {
-	let v = #vec[u32](0, 1, 2);
+	let v = #vec[u32](0, 1, 2.0);
+
+	let vs = #vec[String]("hello ", s, " world");
 }

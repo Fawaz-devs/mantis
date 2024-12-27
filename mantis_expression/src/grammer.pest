@@ -1,5 +1,5 @@
 WHITESPACE = _{ " " | "\t" | NEWLINE }
-COMMENT = _{  "//" ~ ANY* }
+COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
 
 
   expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
@@ -23,14 +23,16 @@ COMMENT = _{  "//" ~ ANY* }
       at     =   { "@" } 
     postfix  =  _{ expr_call }
       expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
-    primary  =  _{  char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
+    primary  =  _{ fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
       float  =  @{ int ~ "." ~ int } 
       word   =  @{ ("_" | ASCII_ALPHA) ~ ("_" | ASCII_ALPHANUMERIC)* }
       expr_list = { expr ~ ("," ~ expr)* }
 
-      let_stmt = { ("let" | "mut") ~ word ~ (":" ~ word)? ~ "=" ~ expr }
+      let_stmt = { (let_word | mut_word) ~ word ~ (":" ~ word)? ~ "=" ~ expr }
+      let_word = { "let" }
+      mut_word = { "mut" }
       ret_stmt = { "return" ~ expr? }
       break_stmt = { "break" ~ word? }
       continue_stmt = { "continue" ~ word? }
@@ -42,7 +44,7 @@ COMMENT = _{  "//" ~ ANY* }
       typed_arg = { word ~ type_name }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
       extern_word = { "extern" }
-      fn_decl = { "fn" ~ type_name ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | extern_word) }
+      fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";")) }
       cond_block = _{ if_block | elif_block | else_block }
       if_block = { "if" ~ expr ~ block }
       elif_block = { "elif" ~ expr ~ block }
@@ -61,4 +63,6 @@ COMMENT = _{  "//" ~ ANY* }
      
       string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
       char = @{ "'" ~ ANY ~ "'" }
+
+      // anonymous_fn = { "fn" };
 

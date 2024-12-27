@@ -10,7 +10,6 @@ fn sumFoo(foo Foo) i32 {
 }
 
 
-
 fn main() {
 	let a = (1 + 2) * 3 / 2;
 	let b = a & 5;
@@ -20,7 +19,6 @@ fn main() {
 	foo.a = a as i32;
 	foo.b = b as i64;
 	foo.c = c as u32;
-
 
 	return sumFoo(foo);
 }
