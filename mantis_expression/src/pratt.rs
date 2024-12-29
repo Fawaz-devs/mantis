@@ -49,6 +49,13 @@ pub enum Block {
     Elif(Node, Box<Block>),
     Else(Box<Block>),
     Loop(Box<str>, Box<Block>),
+    Match(Node, Vec<MatchCase>),
+}
+
+#[derive(Debug)]
+pub struct MatchCase {
+    expr: Node,
+    block: Block,
 }
 
 #[derive(Debug)]
@@ -61,6 +68,8 @@ pub enum Type {
     },
     WithGenerics(Box<str>, Vec<Type>),
     Word(Box<str>),
+    Nested(Box<Type>, Box<Type>),
+    Unknown,
 }
 
 #[derive(Debug)]
@@ -79,17 +88,16 @@ pub enum ImportSymbols {
 }
 
 #[derive(Debug)]
-pub struct ImportDecl {
+pub struct UseDecl {
     alias: Box<str>,
-    path: Box<str>,
-    imports: ImportSymbols,
+    path: Vec<Box<str>>,
 }
 
 #[derive(Debug)]
 pub enum Declaration {
     Function(FunctionDecl),
     Type(Type, Type),
-    Import(ImportDecl),
+    Use(UseDecl),
 }
 
 fn get_pratt_parser() -> PrattParser<Rule> {
@@ -107,7 +115,6 @@ fn get_pratt_parser() -> PrattParser<Rule> {
         .op(Op::infix(Rule::pow, Assoc::Right))
         .op(Op::postfix(Rule::expr_call))
         .op(Op::postfix(Rule::propogate))
-        .op(Op::postfix(Rule::panic))
         .op(Op::prefix(Rule::neg))
         .op(Op::infix(Rule::cast, Assoc::Right))
         .op(Op::prefix(Rule::at))
@@ -181,7 +188,8 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
                 };
                 Node::FnCall(lhs.into(), args)
             }
-            _ => unreachable!(),
+
+            _ => unreachable!("Unhandled Rule {:?} {:?}", op.as_rule(), op.as_span()),
         })
         .parse(pairs)
 }
@@ -203,6 +211,7 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
             }
 
             Rule::fn_decl => Declaration::Function(parse_fn_decl(primary, pratt)),
+            Rule::use_decl => Declaration::Use(parse_use_decl(primary)),
 
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
@@ -211,6 +220,34 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
             ),
         })
         .parse(pairs)
+}
+
+fn parse_use_decl(primary: Pair<Rule>) -> UseDecl {
+    let mut path = Vec::new();
+    let mut next_is_alias = false;
+    let mut alias = None;
+    for token in primary.into_inner().into_iter() {
+        match token.as_rule() {
+            Rule::word => {
+                if next_is_alias {
+                    alias = Some(token.as_str().into());
+                    next_is_alias = false;
+                } else {
+                    path.push(token.as_str().into());
+                }
+            }
+            Rule::cast => {
+                next_is_alias = true;
+            }
+
+            _ => unreachable!(),
+        }
+    }
+
+    UseDecl {
+        alias: alias.unwrap_or("".into()),
+        path,
+    }
 }
 
 fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> FunctionDecl {
@@ -316,9 +353,12 @@ fn parse_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Block {
                 let block = parse_block(next, pratt);
                 blocks.push(Block::Loop(loop_name, block.into()));
             }
-
             Rule::block => {
                 let block = Block::Closed(parse_block(pair, pratt).into());
+                blocks.push(block);
+            }
+            Rule::match_block => {
+                let block = parse_match_block(pair, pratt);
                 blocks.push(block);
             }
             _ => unreachable!("{:#?}", pair),
@@ -330,6 +370,29 @@ fn parse_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Block {
     } else {
         return Block::Continuos(blocks);
     }
+}
+
+fn parse_match_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Block {
+    let mut iter = pair.into_inner().into_iter();
+    let expr = iter.next().unwrap();
+    let expr = parse_expr(Pairs::single(expr), pratt);
+    let mut match_cases = Vec::new();
+    for case in iter {
+        match_cases.push(parse_match_case(case, pratt));
+    }
+
+    Block::Match(expr, match_cases)
+}
+
+fn parse_match_case(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> MatchCase {
+    let mut iter = pair.into_inner().into_iter();
+    let expr = iter.next().unwrap();
+    let expr = parse_expr(Pairs::single(expr), pratt);
+
+    let block = iter.next().unwrap();
+    let block = parse_block(block, pratt);
+
+    MatchCase { expr, block }
 }
 
 fn parse_statement(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Statement {
@@ -348,8 +411,9 @@ fn parse_statement(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Statement {
                 next = iter.next().unwrap();
                 ty
             } else {
-                Type::Word("unknown".into())
+                Type::Unknown
             };
+
             let rhs = parse_expr(Pairs::single(next), pratt);
             Statement::Let(lhs.into(), rhs, ty, is_mutable)
         }
@@ -453,6 +517,21 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                 Type::Enum { fields: map }
             }
 
+            Rule::nested_type_name => {
+                let iter = primary.into_inner().into_iter();
+                let mut types = Vec::new();
+                for word in iter {
+                    types.push(parse_type(Pairs::single(word), pratt));
+                }
+
+                let mut ty = Type::Unknown;
+
+                for nty in types.into_iter().rev() {
+                    ty = Type::Nested(nty.into(), ty.into());
+                }
+
+                ty
+            }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -508,16 +587,18 @@ fn test_pratt() {
     // panic!();
 
     let mut code = String::new();
+
+    code += "use std.libc as c;\n";
+    code += "use std.heap.ArenaAllocator;\n";
+
     code += "type foo = struct { a i32, b f32 }\n";
     code += "type gen[T] = struct { a T, b ptr[T] }\n";
     code += "type doo = i32\n";
     code += "type u32_ptr = ptr[u32]\n";
     code += "type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }\n";
-
     code += "fn malloc(size i64) i64 extern;\n";
     code += "fn foo() i32 { return 74; }\n";
     code += "fn main(argc i32, argv i64) i32 { let a = 29; mut b = 2 + a * 6; return a + b; }\n";
-
     code += r#"
         fn fibonacci(n i32) i32 {
             let i = n;
@@ -557,11 +638,47 @@ fn test_pratt() {
 
             {           
                 let fv = v.iter().map(v).collect[Vec[i64]]();
-                let ufv = v.iter().map(fn (x i32) { return x as f64; }).collect[Vec[f64]]();
+                let ufv = v.iter().map(fn (x i32) f64 { return x as f64; }).collect[Vec[f64]]();
                 return fv;
             }
         }
     "#;
+
+    code += r#"
+        fn enum_test() {
+            mut e: Node[i64] = Node.None;
+            e = Node.Unary(Op.add, 68);
+
+            match e  {
+              Node.Unary(op, value) {
+                  println("op case");
+              }
+              Node.Binary(op, lhs, rhs) {
+                  println("{} {} {}", lhs, op, rhs);
+              }
+              _ {
+                  println("unhandled case");
+              }
+            }
+
+
+                if Node.Unary(op, value) = e {
+                    return value;
+                } else {
+                    return 10;
+                }
+            
+        }
+
+    "#;
+
+    /*
+
+
+
+
+
+    */
 
     println!("{code}");
 

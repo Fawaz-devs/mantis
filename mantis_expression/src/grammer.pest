@@ -21,10 +21,9 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
     prefix   =  _{ neg | at }
       neg    =   { "-" } 
       at     =   { "@" } 
-    postfix  =  _{ expr_call | propogate | panic }
+    postfix  =  _{ expr_call | propogate  }
       expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
       propogate = { "?" }
-      panic = { "!" }
 
 
     primary  =  _{ fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
@@ -34,7 +33,7 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       word   =  @{ ("_" | ASCII_ALPHA) ~ ("_" | ASCII_ALPHANUMERIC)* }
       expr_list = { expr ~ ("," ~ expr)* }
 
-      let_stmt = { (let_word | mut_word) ~ word ~ (":" ~ word)? ~ "=" ~ expr }
+      let_stmt = { (let_word | mut_word) ~ word ~ (":" ~ type_name)? ~ "=" ~ expr }
       let_word = { "let" }
       mut_word = { "mut" }
       ret_stmt = { "return" ~ expr? }
@@ -42,25 +41,26 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       continue_stmt = { "continue" ~ word? }
       stmt = { ( let_stmt | ret_stmt | break_stmt | continue_stmt | expr ) ~ ";" }
       stmts = { stmt+ }
-      block = { "{" ~ (cond_block | stmts | block | loop_block )* ~ "}" }
-      type_name = { word ~ ("[" ~ type_list ~ "]")? }
+      block = { "{" ~ (cond_block | stmts | block | loop_block | match_block )* ~ "}" }
+      type_name = { ( nested_type_name | word ) ~ ("[" ~ type_list ~ "]")? }
+      nested_type_name = { word ~ ( "." ~ word )+ }
       type_list = { type_name ~ ("," ~ type_name)* }
       typed_arg = { word ~ type_name }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
       extern_word = { "extern" }
       fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";")) }
       cond_block = _{ if_block | elif_block | else_block }
-      if_block = { "if" ~ expr ~ block }
-      elif_block = { "elif" ~ expr ~ block }
-      else_block = { "else" ~ block }
-      
+      if_block = { "if" ~ (  expr  ) ~ (stmt | block) }
+      elif_block = { "elif" ~ expr ~ (stmt | block)}
+      else_block = { "else" ~ (stmt | block) }
       loop_block = { "loop" ~ word? ~ block }
+      for_loop = { "for" ~ word ~ "in" ~ expr ~ (stmt | block) }
       type_decl = { "type" ~ type_name ~ "=" ~ ( enum_decl | struct_decl | type_name  ) }
       struct_decl = { "struct" ~  "{" ~  typed_args_list ~ "}" }
       enum_variant = { word ~ ("(" ~ type_list ~ ")")? }
       enum_variants = { enum_variant ~ ( "," ~ enum_variant )* }
       enum_decl = { "enum" ~ "{" ~  enum_variants ~ "}" }
-      declaration = _{ fn_decl | type_decl }
+      declaration = _{ fn_decl | type_decl | use_decl }
       declarations = { declaration* }
       trait_decl = { "trait" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
       trait_impl = { "impl" ~ type_name ~ "for" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
@@ -68,6 +68,25 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
       char = @{ "'" ~ ANY ~ "'" }
 
-      match_stmt = { "match" ~ expr ~ "{" ~ match_case+ ~ "}" }
-      match_case = { expr ~ ":" ~ block ~ "," }
- 
+      match_block = { "match" ~ expr ~ "{" ~ match_case+ ~ "}" }
+      match_case = { expr ~ block }
+      // enum_unwrap = { type_name ~ ("(" ~ (enum_unwrap | enum_unwrap ~ ("," ~ enum_unwrap)* )~ ")")? }
+
+      use_decl = { "use" ~  use_alias ~ ";"}
+      use_alias = _{ word ~ ("." ~ word)* ~ (cast ~  word)? }
+
+      /*
+        use std.libc as c;
+      
+        match e {
+          Some(d) {
+            
+          },
+          None {
+            
+          },
+          _ {
+           
+          }
+        }
+      */
