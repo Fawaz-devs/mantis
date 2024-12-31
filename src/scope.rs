@@ -1,13 +1,42 @@
+use std::{
+    cell::RefCell,
+    rc::{Rc, Weak},
+};
+
 use cranelift::prelude::{Block, FunctionBuilder};
 
 use crate::{
     frontend::tokens::{MsClScope, MsClScopeType, MsScopeType},
     registries::{
+        functions::MsFunctionRegistry,
         types::MsTypeRegistry,
         variable::{MsVar, MsVarRegistry},
         MsRegistry, MsRegistryExt,
     },
 };
+
+#[derive(Debug)]
+pub struct MsVarScopes {
+    pub scopes: Vec<MsVarRegistry>,
+}
+
+impl MsVarScopes {
+    pub fn new_scope(&mut self) -> usize {
+        let index = self.scopes.len();
+        self.scopes.push(MsVarRegistry::default());
+        index
+    }
+
+    pub fn exit_scope(&mut self, fn_registry: &mut MsFunctionRegistry) -> Option<()> {
+        let reg = self.scopes.pop()?;
+
+        for (k, v) in reg.get_registry() {}
+
+        Some(())
+    }
+
+    pub fn exit_scope_until(&mut self, index: usize) {}
+}
 
 #[derive(Debug)]
 pub struct MsScopes {

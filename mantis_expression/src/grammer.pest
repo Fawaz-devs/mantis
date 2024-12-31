@@ -26,7 +26,7 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       propogate = { "?" }
 
 
-    primary  =  _{ fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
+    primary  =  _{  struct_initialization | fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
       float  =  @{ int ~ "." ~ int } 
@@ -41,7 +41,7 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       continue_stmt = { "continue" ~ word? }
       stmt = { ( let_stmt | ret_stmt | break_stmt | continue_stmt | expr ) ~ ";" }
       stmts = { stmt+ }
-      block = { "{" ~ (cond_block | stmts | block | loop_block | match_block )* ~ "}" }
+      block = { "{" ~ (if_else_chain | stmts | block | loop_block | match_block )* ~ "}" }
       type_name = { ( nested_type_name | word ) ~ ("[" ~ type_list ~ "]")? }
       nested_type_name = { word ~ ( "." ~ word )+ }
       type_list = { type_name ~ ("," ~ type_name)* }
@@ -49,7 +49,9 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
       extern_word = { "extern" }
       fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";")) }
-      cond_block = _{ if_block | elif_block | else_block }
+      // cond_block = _{ if_block | elif_block | else_block }
+      if_else_chain = { if_block ~ elif_block* ~ else_block? }
+      
       if_block = { "if" ~ (  expr  ) ~ (stmt | block) }
       elif_block = { "elif" ~ expr ~ (stmt | block)}
       else_block = { "else" ~ (stmt | block) }
@@ -70,6 +72,12 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
 
       match_block = { "match" ~ expr ~ "{" ~ match_case+ ~ "}" }
       match_case = { expr ~ block }
+
+      single_assignment = { word ~ "=" ~ expr }
+      assignment_list = { single_assignment ~ ("," ~ single_assignment)* }
+      struct_initialization = { type_name ~ "{" ~ assignment_list ~ "}" }
+
+      
       // enum_unwrap = { type_name ~ ("(" ~ (enum_unwrap | enum_unwrap ~ ("," ~ enum_unwrap)* )~ ")")? }
 
       use_decl = { "use" ~  use_alias ~ ";"}

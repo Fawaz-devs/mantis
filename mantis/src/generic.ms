@@ -6,12 +6,12 @@ struct Array[T] {
 }
 
 
-trait Into[f64] {
-	fn into(@self) f64;
+trait Into[T] {
+	fn into(self Ref[Self]) T;
 }
 
 impl Into[f64] for u64 {
-	fn into(@self) f64  {
+	fn into(self MutRef[Self]) f64  {
 		self as f64	
 	}
 }

@@ -51,3 +51,14 @@ impl Default for MsFunctionRegistry {
         Self { registry }
     }
 }
+
+#[derive(Debug, Default)]
+pub struct MsTraitRegistry {
+    registry: HashMap<String, HashMap<String, MsFunctionType>>,
+}
+
+impl MsTraitRegistry {
+    pub fn find(&self, trait_name: &str, ty: &MsType) -> Option<&MsFunctionRegistry> {
+        todo!()
+    }
+}

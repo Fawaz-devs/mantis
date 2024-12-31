@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
+use linear_map::LinearMap;
 use mantis_tokens::MantisLexerTokens;
 use smallstring::SmallString;
 
@@ -139,11 +140,11 @@ impl NativeType {
 
 #[derive(Clone, Debug)]
 pub struct StructMapValue {
-    pub fields: BTreeMap<SmallString, Box<MsValue>>,
+    pub fields: HashMap<SmallString, Box<MsValue>>,
 }
 #[derive(Clone, Debug)]
 pub struct StructMapType {
-    pub fields: BTreeMap<SmallString, Box<MsVarType>>,
+    pub fields: LinearMap<SmallString, Box<MsVarType>>,
 }
 
 impl StructMapType {

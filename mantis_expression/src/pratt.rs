@@ -1,3 +1,11 @@
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    hash::Hash,
+    ops::{Deref, Range},
+    rc::Rc,
+};
+
 use linear_map::LinearMap;
 use pest::{
     iterators::{Pair, Pairs},
@@ -11,14 +19,40 @@ use pest_derive::Parser;
 pub struct ExpressionParser;
 
 #[derive(Debug)]
+pub struct WordSpan {
+    range: Range<usize>,
+    content: Rc<str>,
+}
+
+impl Deref for WordSpan {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.content[self.range.clone()]
+    }
+}
+
+impl Hash for WordSpan {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(self.as_bytes());
+    }
+}
+
+impl Display for WordSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", &self)
+    }
+}
+
+#[derive(Debug)]
 pub enum Term {
     Function(Box<FunctionDecl>),
     String(Box<str>),
-    Ident(Box<str>),
     Type(Type),
     I64(i64),
     F64(f64),
     Char(char),
+    Struct(Type, HashMap<Box<str>, Node>),
 }
 
 #[derive(Debug)]
@@ -41,21 +75,32 @@ pub enum Statement {
 }
 
 #[derive(Debug)]
+pub struct ConditionalBlock {
+    pub condition: Node,
+    pub block: Block,
+}
+
+#[derive(Debug)]
+pub struct IfElseChain {
+    pub if_block: ConditionalBlock,
+    pub elif_blocks: Vec<ConditionalBlock>,
+    pub else_block: Option<Block>,
+}
+
+#[derive(Debug)]
 pub enum Block {
     Closed(Box<Block>),
     Statements(Vec<Statement>),
     Continuos(Vec<Block>),
-    If(Node, Box<Block>),
-    Elif(Node, Box<Block>),
-    Else(Box<Block>),
+    IfElseChain(Box<IfElseChain>),
     Loop(Box<str>, Box<Block>),
     Match(Node, Vec<MatchCase>),
 }
 
 #[derive(Debug)]
 pub struct MatchCase {
-    expr: Node,
-    block: Block,
+    pub condition: Node,
+    pub block: Block,
 }
 
 #[derive(Debug)]
@@ -74,11 +119,11 @@ pub enum Type {
 
 #[derive(Debug)]
 pub struct FunctionDecl {
-    name: Type,
-    arguments: LinearMap<Box<str>, Type>,
-    return_type: Type,
-    block: Block,
-    is_extern: bool,
+    pub name: Type,
+    pub arguments: LinearMap<Box<str>, Type>,
+    pub return_type: Type,
+    pub block: Block,
+    pub is_extern: bool,
 }
 
 #[derive(Debug)]
@@ -89,8 +134,8 @@ pub enum ImportSymbols {
 
 #[derive(Debug)]
 pub struct UseDecl {
-    alias: Box<str>,
-    path: Vec<Box<str>>,
+    pub alias: Box<str>,
+    pub path: Vec<Box<str>>,
 }
 
 #[derive(Debug)]
@@ -137,12 +182,24 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             Rule::expr => parse_expr(primary.into_inner(), pratt),
             Rule::int => Node::Term(Term::I64(primary.as_str().parse::<i64>().unwrap())),
             Rule::float => Node::Term(Term::F64(primary.as_str().parse::<f64>().unwrap())),
-            Rule::word => Node::Term(Term::Ident(primary.as_str().into())),
+            // Rule::word => Node::Term(Term::Ident(primary.as_str().into())),
             Rule::string_literal => Node::Term(Term::String(primary.as_str().into())),
             Rule::char => {
                 let c = primary.as_str();
                 let c = &c[1..c.len() - 1];
-                let c = c.chars().next().unwrap();
+                let c = match c {
+                    "\\n" => '\n',
+                    "\\r" => '\r',
+                    "\\t" => '\t',
+                    "\\0" => '\0',
+                    "\\\\" => '\\',
+                    _ => {
+                        let mut iter = c.chars();
+                        let c = iter.next().unwrap();
+                        assert_eq!(iter.next(), None);
+                        c
+                    }
+                };
 
                 Node::Term(Term::Char(c))
             }
@@ -150,6 +207,9 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             Rule::type_name => Node::Term(Term::Type(parse_type(Pairs::single(primary), pratt))),
 
             Rule::fn_decl => Node::Term(Term::Function(parse_fn_decl(primary, pratt).into())),
+            Rule::struct_initialization => {
+                Node::Term(parse_fn_struct_initialzation(primary.into_inner(), pratt))
+            }
 
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
@@ -192,6 +252,24 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             _ => unreachable!("Unhandled Rule {:?} {:?}", op.as_rule(), op.as_span()),
         })
         .parse(pairs)
+}
+
+fn parse_fn_struct_initialzation(pairs: Pairs<'_, Rule>, pratt: &PrattParser<Rule>) -> Term {
+    let mut iter = pairs.into_iter();
+    let type_name = parse_type(Pairs::single(iter.next().unwrap()), pratt);
+    let mut assignment_list = iter.next().unwrap().into_inner().into_iter();
+    let mut map = HashMap::new();
+    for single_assignment in assignment_list {
+        let mut iter = single_assignment.into_inner().into_iter();
+        let next = iter.next().unwrap();
+        assert_eq!(next.as_rule(), Rule::word);
+        let key = next.as_str().into();
+        let next = iter.next().unwrap();
+        let assignment = parse_expr(Pairs::single(next), pratt);
+        map.insert(key, assignment);
+    }
+
+    Term::Struct(type_name, map)
 }
 fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Declaration {
     pratt
@@ -321,22 +399,58 @@ fn parse_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Block {
 
                 blocks.push(Block::Statements(statements));
             }
-            Rule::if_block => {
+            // Rule::if_block => {
+            //     let mut iter = pair.into_inner().into_iter();
+            //     let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
+            //     let block = parse_block(iter.next().unwrap(), pratt);
+            //     blocks.push(Block::If(expr, block.into()));
+            // }
+            // Rule::elif_block => {
+            //     let mut iter = pair.into_inner().into_iter();
+            //     let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
+            //     let block = parse_block(iter.next().unwrap(), pratt);
+            //     blocks.push(Block::Elif(expr, block.into()));
+            // }
+            // Rule::else_block => {
+            //     let mut iter = pair.into_inner().into_iter();
+            //     let block = parse_block(iter.next().unwrap(), pratt);
+            //     blocks.push(Block::Else(block.into()));
+            // }
+            Rule::if_else_chain => {
                 let mut iter = pair.into_inner().into_iter();
-                let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
-                let block = parse_block(iter.next().unwrap(), pratt);
-                blocks.push(Block::If(expr, block.into()));
-            }
-            Rule::elif_block => {
-                let mut iter = pair.into_inner().into_iter();
-                let expr = parse_expr(Pairs::single(iter.next().unwrap()), pratt);
-                let block = parse_block(iter.next().unwrap(), pratt);
-                blocks.push(Block::Elif(expr, block.into()));
-            }
-            Rule::else_block => {
-                let mut iter = pair.into_inner().into_iter();
-                let block = parse_block(iter.next().unwrap(), pratt);
-                blocks.push(Block::Else(block.into()));
+                let if_block = iter.next().unwrap();
+                let if_block = {
+                    let mut if_iter = if_block.into_inner().into_iter();
+                    let condition = parse_expr(Pairs::single(if_iter.next().unwrap()), pratt);
+                    let block = parse_block(if_iter.next().unwrap(), pratt);
+                    ConditionalBlock { condition, block }
+                };
+
+                let mut elif_blocks = Vec::new();
+                let mut else_block = None;
+
+                while let Some(else_or_else_if_block) = iter.next() {
+                    if matches!(else_or_else_if_block.as_rule(), Rule::elif_block) {
+                        let mut if_iter = else_or_else_if_block.into_inner().into_iter();
+                        let condition = parse_expr(Pairs::single(if_iter.next().unwrap()), pratt);
+                        let block = parse_block(if_iter.next().unwrap(), pratt);
+                        elif_blocks.push(ConditionalBlock { condition, block });
+                    } else if matches!(else_or_else_if_block.as_rule(), Rule::else_block) {
+                        else_block = Some(parse_block(
+                            else_or_else_if_block.into_inner().next().unwrap(),
+                            pratt,
+                        ));
+                    }
+                }
+
+                blocks.push(Block::IfElseChain(
+                    IfElseChain {
+                        if_block,
+                        elif_blocks,
+                        else_block,
+                    }
+                    .into(),
+                ));
             }
 
             Rule::loop_block => {
@@ -392,7 +506,10 @@ fn parse_match_case(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> MatchCase {
     let block = iter.next().unwrap();
     let block = parse_block(block, pratt);
 
-    MatchCase { expr, block }
+    MatchCase {
+        condition: expr,
+        block,
+    }
 }
 
 fn parse_statement(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Statement {
@@ -524,9 +641,10 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                     types.push(parse_type(Pairs::single(word), pratt));
                 }
 
-                let mut ty = Type::Unknown;
+                let mut rev_iter = types.into_iter().rev();
 
-                for nty in types.into_iter().rev() {
+                let mut ty = rev_iter.next().unwrap_or(Type::Unknown);
+                for nty in rev_iter {
                     ty = Type::Nested(nty.into(), ty.into());
                 }
 
@@ -551,21 +669,22 @@ fn parse_expr_list(pair: Pair<Rule>, pratt: &PrattParser<Rule>) -> Vec<Node> {
         .collect::<Vec<_>>()
 }
 
-fn parse_blocks(input: &str) -> anyhow::Result<()> {
+fn parse_blocks(input: &str) -> anyhow::Result<Vec<Declaration>> {
     let pratt = get_pratt_parser();
     let pairs = ExpressionParser::parse(Rule::declarations, input)?;
     // let pairs = pairs.into_iter().next().unwrap().into_inner();
+    let mut declarataions = Vec::new();
     for pair in pairs.into_iter() {
         let inner_pair = pair.into_inner();
 
         for pair in inner_pair.into_iter() {
             let inner_pair = Pairs::single(pair);
-            let node = parse_decls(inner_pair, &pratt);
-            dbg!(node);
+            let declaration = parse_decls(inner_pair, &pratt);
+            declarataions.push(declaration)
         }
     }
 
-    Ok(())
+    Ok(declarataions)
 }
 
 #[test]
@@ -584,105 +703,9 @@ fn test_pratt() {
         dbg!(node);
     }
 
-    // panic!();
+    let code = std::fs::read_to_string("test.ms").unwrap();
 
-    let mut code = String::new();
+    let decls = parse_blocks(code.as_str()).unwrap();
 
-    code += "use std.libc as c;\n";
-    code += "use std.heap.ArenaAllocator;\n";
-
-    code += "type foo = struct { a i32, b f32 }\n";
-    code += "type gen[T] = struct { a T, b ptr[T] }\n";
-    code += "type doo = i32\n";
-    code += "type u32_ptr = ptr[u32]\n";
-    code += "type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }\n";
-    code += "fn malloc(size i64) i64 extern;\n";
-    code += "fn foo() i32 { return 74; }\n";
-    code += "fn main(argc i32, argv i64) i32 { let a = 29; mut b = 2 + a * 6; return a + b; }\n";
-    code += r#"
-        fn fibonacci(n i32) i32 {
-            let i = n;
-            if n == 0  {
-                return 0;
-            } elif n == 1 { 
-                return 1;
-            } else {
-                return fibonacci(n-1) + fibonacci(n - 2);
-            }
-        }
-    "#;
-
-    code += r#"
-    fn loop_test(n i32) i32 {
-        mut i = n;
-        loop my_loop {
-            println("{}", i);
-            i = i - 1;
-            if i < 0 {
-                break;
-            }
-        }
-
-        return i;
-    }
-
-        
-    "#;
-
-    code += r#"
-        fn lamda_test()  {
-            let v = Vec[i32].with_capacity(1024);
-            let f = fn (x i32) i64 {
-                return x as i64;
-            };
-
-            {           
-                let fv = v.iter().map(v).collect[Vec[i64]]();
-                let ufv = v.iter().map(fn (x i32) f64 { return x as f64; }).collect[Vec[f64]]();
-                return fv;
-            }
-        }
-    "#;
-
-    code += r#"
-        fn enum_test() {
-            mut e: Node[i64] = Node.None;
-            e = Node.Unary(Op.add, 68);
-
-            match e  {
-              Node.Unary(op, value) {
-                  println("op case");
-              }
-              Node.Binary(op, lhs, rhs) {
-                  println("{} {} {}", lhs, op, rhs);
-              }
-              _ {
-                  println("unhandled case");
-              }
-            }
-
-
-                if Node.Unary(op, value) = e {
-                    return value;
-                } else {
-                    return 10;
-                }
-            
-        }
-
-    "#;
-
-    /*
-
-
-
-
-
-    */
-
-    println!("{code}");
-
-    parse_blocks(code.as_str()).unwrap();
-
-    panic!("because rust doesn't output when succeeds")
+    std::fs::write("/tmp/declarations", format!("{:#?}", decls)).unwrap();
 }

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use mantis_tokens::MantisLexerTokens;
-use node::{BinaryOperation, Node, UnaryOperation};
+use node::{BinaryOperation, Node};
 
 pub mod node;
 pub mod pratt;
