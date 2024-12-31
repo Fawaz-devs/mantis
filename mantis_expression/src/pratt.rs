@@ -46,6 +46,7 @@ impl Display for WordSpan {
 
 #[derive(Debug)]
 pub enum Term {
+    Array(Vec<Node>),
     Function(Box<FunctionDecl>),
     String(Box<str>),
     Type(Type),
@@ -111,7 +112,7 @@ pub enum Type {
     Struct {
         fields: LinearMap<Box<str>, Type>,
     },
-    WithGenerics(Box<str>, Vec<Type>),
+    WithGenerics(Box<Type>, Vec<Type>),
     Word(Box<str>),
     Nested(Box<Type>, Box<Type>),
     Unknown,
@@ -210,7 +211,12 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Node {
             Rule::struct_initialization => {
                 Node::Term(parse_fn_struct_initialzation(primary.into_inner(), pratt))
             }
+            Rule::word => Node::Term(Term::Type(Type::Word(primary.as_str().into()))),
 
+            Rule::array_initialization => Node::Term(Term::Array(parse_expr_list(
+                primary.into_inner().next().unwrap(),
+                pratt,
+            ))),
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -595,7 +601,10 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>) -> Type {
                         generics.push(parse_type(Pairs::single(ty), pratt));
                     }
 
-                    return Type::WithGenerics(word.as_str().into(), generics);
+                    return Type::WithGenerics(
+                        parse_type(Pairs::single(word), pratt).into(),
+                        generics,
+                    );
                 } else {
                     parse_type(Pairs::single(word), pratt)
                 }

@@ -82,3 +82,16 @@ fn struct_test() Foo {
 	let foo = Foo { a = 10, b = 20, doo = Doo { a = 10, b = 69 } };
 	return foo;
 }
+
+fn nested_test()  {
+	let a = std.collections.HashMap[Box[str], std.collections.BTreeMap].new();
+	return a;
+}
+
+
+fn array_init_test() {
+	let a = [ 0, 1, 2, 3, 4 ];
+
+	return a;
+	
+}

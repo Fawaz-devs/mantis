@@ -26,7 +26,7 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       propogate = { "?" }
 
 
-    primary  =  _{  struct_initialization | fn_decl | type_name | char | string_literal | float | int | word | "(" ~ expr ~ ")"  }
+    primary  =  _{  array_initialization | struct_initialization | fn_decl | char | string_literal | float | int | type_name | word | "(" ~ expr ~ ")"  }
       // ident  =  @{ int | float | word } 
       int    =  @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT+ | ASCII_DIGIT) }
       float  =  @{ int ~ "." ~ int } 
@@ -76,25 +76,8 @@ COMMENT = _{  "//" ~ ANY* ~ NEWLINE }
       single_assignment = { word ~ "=" ~ expr }
       assignment_list = { single_assignment ~ ("," ~ single_assignment)* }
       struct_initialization = { type_name ~ "{" ~ assignment_list ~ "}" }
-
-      
-      // enum_unwrap = { type_name ~ ("(" ~ (enum_unwrap | enum_unwrap ~ ("," ~ enum_unwrap)* )~ ")")? }
+      array_initialization = { "[" ~ expr_list ~ "]" }
 
       use_decl = { "use" ~  use_alias ~ ";"}
       use_alias = _{ word ~ ("." ~ word)* ~ (cast ~  word)? }
 
-      /*
-        use std.libc as c;
-      
-        match e {
-          Some(d) {
-            
-          },
-          None {
-            
-          },
-          _ {
-           
-          }
-        }
-      */
