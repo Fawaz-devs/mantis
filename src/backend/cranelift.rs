@@ -17,7 +17,9 @@ use cranelift::{
     },
     prelude::*,
 };
-use cranelift_module::{default_libcall_names, DataDescription, FuncOrDataId, Linkage, Module};
+use cranelift_module::{
+    default_libcall_names, DataDescription, FuncId, FuncOrDataId, Linkage, Module,
+};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use types::I32;
 
@@ -72,6 +74,11 @@ fn test_cranelift() -> anyhow::Result<()> {
     let func_id = module.declare_function("anonymous_fn", Linkage::Export, &ctx.func.signature)?;
     module.define_function(func_id, &mut ctx)?;
     module.clear_context(&mut ctx);
+
+    // let func_id = module.declare_function("recursive_fn", Linkage::Export, &ctx.func.signature)?;
+    recursive_fn_builder(&mut module, &mut ctx, &mut fn_builder_ctx);
+    // module.define_function(func_id, &mut ctx)?;
+    // module.clear_context(&mut ctx);
 
     // build_main_fn(&mut module, &mut ctx, &mut fn_builder_ctx);
     // let func_id = module.declare_function("main", Linkage::Preemptible, &ctx.func.signature)?;
@@ -506,6 +513,52 @@ fn anonymous_fn_builder(
         f.ins().return_(&[val]);
         f.finalize();
     }
+}
+fn recursive_fn_builder(
+    module: &mut ObjectModule,
+    ctx: &mut Context,
+    fbx: &mut FunctionBuilderContext,
+) {
+    ctx.func.signature.params = vec![AbiParam::new(I64)];
+    ctx.func.signature.returns = vec![AbiParam::new(I64)];
+
+    let func_id = module
+        .declare_function("fibonacci", Linkage::Export, &ctx.func.signature)
+        .unwrap();
+
+    let mut f = FunctionBuilder::new(&mut ctx.func, fbx);
+    let entry_block = f.create_block();
+
+    f.append_block_params_for_function_params(entry_block);
+    f.switch_to_block(entry_block);
+
+    let n = f.block_params(entry_block)[0];
+    let is_n_zero = f
+        .ins()
+        .icmp_imm(condcodes::IntCC::SignedLessThanOrEqual, n, 1);
+    let then_block = f.create_block();
+    let else_block = f.create_block();
+    f.ins().brif(is_n_zero, then_block, &[], else_block, &[]);
+    f.switch_to_block(then_block);
+    f.ins().return_(&[n]);
+    f.seal_block(then_block);
+
+    f.switch_to_block(else_block);
+    let n_minus_one = f.ins().iadd_imm(n, -1);
+    let n_minus_two = f.ins().iadd_imm(n, -2);
+    let func_ref = module.declare_func_in_func(func_id, f.func);
+    let fibn_minus_one = f.ins().call(func_ref, &[n_minus_one]);
+    let fibn_minus_one = f.inst_results(fibn_minus_one)[0];
+    let fibn_minus_two = f.ins().call(func_ref, &[n_minus_two]);
+    let fibn_minus_two = f.inst_results(fibn_minus_two)[0];
+    let val = f.ins().iadd(fibn_minus_two, fibn_minus_one);
+    f.ins().return_(&[val]);
+    f.seal_block(else_block);
+    f.seal_block(entry_block);
+    f.finalize();
+
+    module.define_function(func_id, ctx);
+    module.clear_context(ctx);
 }
 
 fn build_main_fn(module: &mut ObjectModule, ctx: &mut Context, fbx: &mut FunctionBuilderContext) {

@@ -7,11 +7,16 @@ type Doo = i32
 type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }
 
 trait ToString {
-    fn to_string(self Self) String;
+    fn to_string(self @Self) String;
+}
+
+
+fn food(a  @mut Foo) {
+    a = Foo.new();
 }
 
 impl ToString for i64 {
-    fn to_string(self Self) String {
+    fn to_string(self @Self) String {
         mut s = String.new();
         mut i = self;
         if i < 0 {

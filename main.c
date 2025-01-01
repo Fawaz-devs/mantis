@@ -26,6 +26,7 @@ extern struct Foo create_foo(int b);
 extern long sum_foo(struct Foo foo);
 extern long sum_foo_ptr(struct Foo *foo);
 extern long anonymous_fn(long foo);
+extern long fibonacci(long n);
 
 
 long my_sum(struct Foo foo) {
@@ -61,8 +62,12 @@ int main() {
   // sum= my_sum(foo);
   // printf("sum of my foo %ld\n", sum);
 
-  long sum= anonymous_fn(10);
-  printf("sum of my foo %ld\n", sum);
+  // long sum = anonymous_fn(10);
+  // printf("sum of my foo %ld\n", sum);
+
+  for (int i = 0; i < 10; i++) {
+    printf("fib of %d is %ld", i, fibonacci(i));
+  }
 
   return 0;
 }

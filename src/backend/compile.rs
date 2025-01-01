@@ -19,9 +19,10 @@ pub fn resolve_typename(ty: &Type) -> Box<str> {
         Type::Enum { fields } => todo!(),
         Type::Struct { fields } => todo!(),
         Type::WithGenerics(_, vec) => todo!(),
-        Type::Word(val) => val.clone(),
         Type::Nested(_, _) => todo!(),
         Type::Unknown => todo!(),
+        Type::Word(word_span) => todo!(),
+        Type::Ref(_, _) => todo!(),
     }
 }
 

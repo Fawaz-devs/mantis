@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt::{Debug, Display},
     hash::Hash,
     ops::{Deref, Range},
@@ -116,7 +115,7 @@ pub enum Node {
 
 #[derive(Debug)]
 pub enum Statement {
-    Let(WordSpan, Node, Type, bool),
+    Let(WordSpan, Node, Type, bool), // var, expr, expected_type, is_mutable
     Return(Node),
     Break(Option<WordSpan>),
     Continue(Option<WordSpan>),
@@ -144,6 +143,7 @@ pub enum Block {
     IfElseChain(Box<IfElseChain>),
     Loop(Option<WordSpan>, Box<Block>),
     Match(Node, Vec<MatchCase>),
+    Empty,
 }
 
 #[derive(Debug)]
@@ -163,6 +163,8 @@ pub enum Type {
     WithGenerics(Box<Type>, Vec<Type>),
     Word(WordSpan),
     Nested(Box<Type>, Box<Type>),
+
+    Ref(Box<Type>, bool), // (type, is_mutable)
     Unknown,
 }
 
@@ -474,7 +476,7 @@ fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
         LinearMap::new()
     };
 
-    let mut block = Block::Statements(Vec::new());
+    let mut block = Block::Empty;
     let mut is_extern = false;
     let return_ty = if matches!(next.as_rule(), Rule::type_name) {
         let ret_ty = next;
@@ -695,30 +697,71 @@ fn parse_typed_args(
         let arg_name = typed_arg.next().unwrap().as_span();
         let arg_type = typed_arg.next().unwrap();
         let arg_type = parse_type(Pairs::single(arg_type), pratt, src);
+
         map.insert(WordSpan::from_span(arg_name, src), arg_type);
     }
 
     map
 }
 
-fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Type {
+fn parse_type(mut pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Type {
+    // dbg!(&pairs);
+    // let first = pairs.next().unwrap();
+
+    // let mut iter = first.into_inner().into_iter();
+    // let mut arg_type = iter.next().unwrap();
+
+    // dbg!(&arg_type);
+
+    // let mut is_mutable = false;
+    // let mut is_reference = false;
+
+    // if matches!(arg_type.as_rule(), Rule::at) {
+    //     is_reference = true;
+    //     arg_type = iter.next().unwrap();
+    // }
+    // if matches!(arg_type.as_rule(), Rule::mut_word) {
+    //     is_mutable = true;
+    //     arg_type = iter.next().unwrap();
+    // }
+
+    // let arg_type = Pairs::single(arg_type);
+    // dbg!(&arg_type);
+
     pratt
         .map_primary(|primary| match primary.as_rule() {
             Rule::type_name => {
                 let mut iter = primary.into_inner().into_iter();
-                let word = iter.next().unwrap();
-                if let Some(type_list) = iter.next() {
+                let mut word = iter.next().unwrap();
+
+                let mut is_reference = false;
+                let mut is_mutable = false;
+
+                if matches!(word.as_rule(), Rule::at) {
+                    word = iter.next().unwrap();
+                    is_reference = true;
+                }
+                if matches!(word.as_rule(), Rule::mut_word) {
+                    word = iter.next().unwrap();
+                    is_mutable = true;
+                }
+
+                let word = parse_type(Pairs::single(word), pratt, src);
+
+                let ty = if let Some(type_list) = iter.next() {
                     let mut generics = Vec::new();
                     for ty in type_list.into_inner().into_iter() {
                         generics.push(parse_type(Pairs::single(ty), pratt, src));
                     }
 
-                    return Type::WithGenerics(
-                        parse_type(Pairs::single(word), pratt, src).into(),
-                        generics,
-                    );
+                    Type::WithGenerics(word.into(), generics)
                 } else {
-                    parse_type(Pairs::single(word), pratt, src)
+                    word
+                };
+                if is_reference {
+                    Type::Ref(ty.into(), is_mutable)
+                } else {
+                    ty
                 }
             }
             Rule::word => Type::Word(WordSpan::from_span(primary.as_span(), src)),
@@ -763,7 +806,6 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
                 }
 
                 let mut rev_iter = types.into_iter().rev();
-
                 let mut ty = rev_iter.next().unwrap_or(Type::Unknown);
                 for nty in rev_iter {
                     ty = Type::Nested(nty.into(), ty.into());
@@ -771,6 +813,7 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
 
                 ty
             }
+
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
