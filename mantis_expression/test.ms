@@ -6,6 +6,45 @@ type Gen[T] = struct { a T, b ptr[T] }
 type Doo = i32
 type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }
 
+// trait ToString {
+//     fn to_string(self @Self) String;
+// }
+
+// impl ToString for i64 {
+//     fn to_string(self @Self) String {
+//         mut s = String.new();
+//         mut i = self;
+//         if i < 0 {
+//             s.push('-');
+//         }
+//         i = i.abs();
+
+//         mut v = Vec.new();
+//         loop {
+//             let reminder = i % 10;
+//             v.push(reminder);
+//             i = i / 10;
+
+//             if i == 0 {
+//                 break;
+//             }
+//         }
+
+//         mut iter = v.into_iter().rev();
+
+//         loop {
+//             if Some(digit) = iter.next() {
+//                 s.push((48 + digit) as char);
+//             } else {
+//                 break;
+//             }
+//         }
+
+//         return s;
+//     }
+// }
+
+
 
 fn malloc(size i64) i64 extern;
 fn foo() i32 { return 74; }
@@ -39,21 +78,6 @@ fn loop_test(n i32) i32 {
     return i;
 }
 
-
-fn lamda_test()  {
-    let v = Vec[i32].with_capacity(1024);
-    let f = fn (x i32) i64 {
-        return x as i64;
-    };
-
-    {           
-        let fv = v.iter().map(v).collect[Vec[i64]]();
-        let ufv = v.iter().map(fn (x i32) f64 { return x as f64; }).collect[Vec[f64]]();
-        return fv;
-    }
-}
-
-
 fn enum_test() {
     mut e: Node[i64] = Node.None;
     e = Node.Unary(Op.add, 68);
@@ -82,6 +106,24 @@ fn struct_test() Foo {
 	let foo = Foo { a = 10, b = 20, doo = Doo { a = 10, b = 69 } };
 	return foo;
 }
+
+
+fn lamda_test()  {
+    let v = Vec[i32].with_capacity(1024);
+    let f = fn (x i32) i64 {
+        return x as i64;
+    };
+
+    {           
+        let fv = v.iter().map(v).collect[Vec[i64]]();
+        let ufv = v.inner.iter().map(fn (x i32) f64 { return x as f64; }).collect();
+    	let a = std.collections.HashMap.new;
+        
+        return fv;
+    }
+}
+
+
 
 fn nested_test()  {
 	let a = std.collections.HashMap[Box[str], std.collections.BTreeMap].new();
