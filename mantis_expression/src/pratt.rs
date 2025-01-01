@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     hash::Hash,
     ops::{Deref, Range},
@@ -9,7 +10,7 @@ use linear_map::LinearMap;
 use pest::{
     iterators::{Pair, Pairs},
     pratt_parser::{Assoc, Op, PrattParser},
-    Parser,
+    Parser, Span,
 };
 use pest_derive::Parser;
 
@@ -17,6 +18,7 @@ use pest_derive::Parser;
 #[grammar = "./grammer.pest"]
 pub struct ExpressionParser;
 
+#[derive(Clone)]
 pub struct WordSpan {
     content: Rc<str>,
     range: Range<usize>,
@@ -24,11 +26,15 @@ pub struct WordSpan {
 
 impl WordSpan {
     pub fn new(content: Rc<str>, range: Range<usize>) -> Self {
-        // assert!(content.len() <= range.end);
+        assert!(content.len() >= range.end);
         Self {
             content: content.into(),
             range,
         }
+    }
+
+    pub fn from_span(span: Span, src: &Rc<str>) -> Self {
+        Self::new(src.clone(), span.start()..span.end())
     }
 }
 
@@ -62,6 +68,17 @@ impl From<&str> for WordSpan {
     }
 }
 
+impl PartialEq for WordSpan {
+    fn eq(&self, other: &Self) -> bool {
+        let s: &str = &self;
+        let other: &str = other;
+
+        s == other
+    }
+}
+
+impl Eq for WordSpan {}
+
 impl Hash for WordSpan {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write(self.as_bytes());
@@ -71,7 +88,7 @@ impl Hash for WordSpan {
 impl Display for WordSpan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s: &str = &self;
-        write!(f, "{}", s)
+        write!(f, "{}@{}..{}", s, self.range.start, self.range.end)
     }
 }
 
@@ -79,12 +96,12 @@ impl Display for WordSpan {
 pub enum Term {
     Array(Vec<Node>),
     Function(Box<FunctionDecl>),
-    String(Box<str>),
+    String(WordSpan),
     Type(Type),
     I64(i64),
     F64(f64),
     Char(char),
-    Struct(Type, LinearMap<Box<str>, Node>),
+    Struct(Type, LinearMap<WordSpan, Node>),
 }
 
 #[derive(Debug)]
@@ -99,10 +116,10 @@ pub enum Node {
 
 #[derive(Debug)]
 pub enum Statement {
-    Let(Box<str>, Node, Type, bool),
+    Let(WordSpan, Node, Type, bool),
     Return(Node),
-    Break(Box<str>),
-    Continue(Box<str>),
+    Break(Option<WordSpan>),
+    Continue(Option<WordSpan>),
     Expr(Node),
 }
 
@@ -125,7 +142,7 @@ pub enum Block {
     Statements(Vec<Statement>),
     Continuos(Vec<Block>),
     IfElseChain(Box<IfElseChain>),
-    Loop(Box<str>, Box<Block>),
+    Loop(Option<WordSpan>, Box<Block>),
     Match(Node, Vec<MatchCase>),
 }
 
@@ -135,13 +152,13 @@ pub struct MatchCase {
     pub block: Block,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Enum {
-        fields: LinearMap<Box<str>, Vec<Type>>,
+        fields: LinearMap<WordSpan, Vec<Type>>,
     },
     Struct {
-        fields: LinearMap<Box<str>, Type>,
+        fields: LinearMap<WordSpan, Type>,
     },
     WithGenerics(Box<Type>, Vec<Type>),
     Word(WordSpan),
@@ -152,22 +169,16 @@ pub enum Type {
 #[derive(Debug)]
 pub struct FunctionDecl {
     pub name: Type,
-    pub arguments: LinearMap<Box<str>, Type>,
+    pub arguments: LinearMap<WordSpan, Type>,
     pub return_type: Type,
     pub block: Block,
     pub is_extern: bool,
 }
 
 #[derive(Debug)]
-pub enum ImportSymbols {
-    Everything,
-    Selected(Vec<Box<str>>),
-}
-
-#[derive(Debug)]
 pub struct UseDecl {
-    pub alias: Box<str>,
-    pub path: Vec<Box<str>>,
+    pub alias: Option<WordSpan>,
+    pub path: Vec<WordSpan>,
 }
 
 #[derive(Debug)]
@@ -175,6 +186,14 @@ pub enum Declaration {
     Function(FunctionDecl),
     Type(Type, Type),
     Use(UseDecl),
+    Trait(TraitDecl),
+    TraitImpl(TraitDecl, Type),
+}
+
+#[derive(Debug)]
+pub struct TraitDecl {
+    name: Type,
+    functions: Vec<FunctionDecl>,
 }
 
 fn get_pratt_parser() -> PrattParser<Rule> {
@@ -187,6 +206,7 @@ fn get_pratt_parser() -> PrattParser<Rule> {
             | Op::infix(Rule::le, Assoc::Left)
             | Op::infix(Rule::le_eq, Assoc::Left)
             | Op::infix(Rule::gt_eq, Assoc::Left))
+        .op(Op::infix(Rule::modulus, Assoc::Left))
         .op(Op::infix(Rule::add, Assoc::Left) | Op::infix(Rule::sub, Assoc::Left))
         .op(Op::infix(Rule::mul, Assoc::Left) | Op::infix(Rule::div, Assoc::Left))
         .op(Op::infix(Rule::pow, Assoc::Right))
@@ -214,7 +234,9 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> N
             Rule::int => Node::Term(Term::I64(primary.as_str().parse::<i64>().unwrap())),
             Rule::float => Node::Term(Term::F64(primary.as_str().parse::<f64>().unwrap())),
             // Rule::word => Node::Term(Term::Ident(primary.as_str().into())),
-            Rule::string_literal => Node::Term(Term::String(primary.as_str().into())),
+            Rule::string_literal => {
+                Node::Term(Term::String(WordSpan::from_span(primary.as_span(), src)))
+            }
             Rule::char => {
                 let c = primary.as_str();
                 let c = &c[1..c.len() - 1];
@@ -245,14 +267,10 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> N
                 pratt,
                 src,
             )),
-            Rule::word => {
-                let span = primary.as_span();
-
-                Node::Term(Term::Type(Type::Word(WordSpan::new(
-                    src.clone(),
-                    span.start()..span.end(),
-                ))))
-            }
+            Rule::word => Node::Term(Term::Type(Type::Word(WordSpan::from_span(
+                primary.as_span(),
+                src,
+            )))),
 
             Rule::array_initialization => Node::Term(Term::Array(parse_expr_list(
                 primary.into_inner().next().unwrap(),
@@ -271,6 +289,7 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> N
         })
         .map_infix(|lhs, op, rhs| match op.as_rule() {
             Rule::add
+            | Rule::modulus
             | Rule::sub
             | Rule::mul
             | Rule::div
@@ -315,7 +334,8 @@ fn parse_fn_struct_initialzation(
         let mut iter = single_assignment.into_inner().into_iter();
         let next = iter.next().unwrap();
         assert_eq!(next.as_rule(), Rule::word);
-        let key = next.as_str().into();
+        let key_word = next.as_span();
+        let key = WordSpan::from_span(key_word, src);
         let next = iter.next().unwrap();
         let assignment = parse_expr(Pairs::single(next), pratt, src);
         map.insert(key, assignment);
@@ -341,8 +361,13 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
             }
 
             Rule::fn_decl => Declaration::Function(parse_fn_decl(primary, pratt, src)),
-            Rule::use_decl => Declaration::Use(parse_use_decl(primary)),
+            Rule::use_decl => Declaration::Use(parse_use_decl(primary, src)),
+            Rule::trait_decl => Declaration::Trait(parse_trait_decl(primary, pratt, src)),
 
+            Rule::trait_impl => {
+                let (for_type, trait_decl) = parse_trait_impl(primary, pratt, src);
+                Declaration::TraitImpl(trait_decl, for_type)
+            }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),
@@ -352,7 +377,52 @@ fn parse_decls(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
         .parse(pairs)
 }
 
-fn parse_use_decl(primary: Pair<Rule>) -> UseDecl {
+fn parse_trait_impl(
+    primary: Pair<'_, Rule>,
+    pratt: &PrattParser<Rule>,
+    src: &Rc<str>,
+) -> (Type, TraitDecl) {
+    let mut iter = primary.into_inner().into_iter();
+    let trait_name = parse_type(Pairs::single(iter.next().unwrap()), pratt, src);
+    let next = iter.next().unwrap();
+
+    let mut functions = Vec::new();
+    let for_type = if matches!(next.as_rule(), Rule::type_name) {
+        parse_type(Pairs::single(next), pratt, src)
+    } else {
+        if matches!(next.as_rule(), Rule::fn_decl) {
+            functions.push(parse_fn_decl(next, pratt, src));
+        }
+        trait_name.clone()
+    };
+    functions.extend(iter.map(|x| parse_fn_decl(x, pratt, src)));
+
+    (
+        for_type,
+        TraitDecl {
+            name: trait_name,
+            functions,
+        },
+    )
+}
+
+fn parse_trait_decl(
+    primary: Pair<'_, Rule>,
+    pratt: &PrattParser<Rule>,
+    src: &Rc<str>,
+) -> TraitDecl {
+    let mut iter = primary.into_inner().into_iter();
+    let trait_name = parse_type(Pairs::single(iter.next().unwrap()), pratt, src);
+
+    let functions = iter.map(|x| parse_fn_decl(x, pratt, src)).collect();
+
+    TraitDecl {
+        name: trait_name,
+        functions,
+    }
+}
+
+fn parse_use_decl(primary: Pair<Rule>, src: &Rc<str>) -> UseDecl {
     let mut path = Vec::new();
     let mut next_is_alias = false;
     let mut alias = None;
@@ -360,10 +430,12 @@ fn parse_use_decl(primary: Pair<Rule>) -> UseDecl {
         match token.as_rule() {
             Rule::word => {
                 if next_is_alias {
-                    alias = Some(token.as_str().into());
+                    let token = token.as_span();
+                    alias = Some(WordSpan::from_span(token, src));
                     next_is_alias = false;
                 } else {
-                    path.push(token.as_str().into());
+                    let token = token.as_span();
+                    path.push(WordSpan::from_span(token, src));
                 }
             }
             Rule::cast => {
@@ -374,10 +446,7 @@ fn parse_use_decl(primary: Pair<Rule>) -> UseDecl {
         }
     }
 
-    UseDecl {
-        alias: alias.unwrap_or("".into()),
-        path,
-    }
+    UseDecl { alias, path }
 }
 
 fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> FunctionDecl {
@@ -405,17 +474,29 @@ fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
         LinearMap::new()
     };
 
+    let mut block = Block::Statements(Vec::new());
+    let mut is_extern = false;
     let return_ty = if matches!(next.as_rule(), Rule::type_name) {
         let ret_ty = next;
-        next = iter.next().unwrap();
-        parse_type(Pairs::single(ret_ty), pratt, src)
+        let ret_ty = parse_type(Pairs::single(ret_ty), pratt, src);
+        if let Some(next_item) = iter.next() {
+            next = next_item;
+        } else {
+            return FunctionDecl {
+                name: fn_name,
+                arguments: args,
+                return_type: ret_ty,
+                block,
+                is_extern,
+            };
+        }
+        // next = iter.next().unwrap();
+        ret_ty
     } else {
         Type::Word("void".into())
     };
 
     // let mut blocks = Vec::new();
-    let mut block = Block::Statements(Vec::new());
-    let mut is_extern = false;
 
     if matches!(next.as_rule(), Rule::block) {
         loop {
@@ -494,11 +575,11 @@ fn parse_block(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Bl
                 let mut iter = pair.into_inner().into_iter();
                 let mut next = iter.next().unwrap();
                 let loop_name = if matches!(next.as_rule(), Rule::word) {
-                    let ln = next.as_str().into();
+                    let ln = next.as_span();
                     next = iter.next().unwrap();
-                    ln
+                    Some(WordSpan::from_span(ln, src))
                 } else {
-                    "".into()
+                    None
                 };
 
                 let block = parse_block(next, pratt, src);
@@ -577,24 +658,20 @@ fn parse_statement(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -
             Statement::Return(expr)
         }
         Rule::break_stmt => {
-            let word = inner
-                .into_inner()
-                .into_iter()
-                .next()
-                .map(|x| x.as_str().into())
-                .unwrap_or("".into());
-
-            Statement::Break(word)
+            if let Some(word) = inner.into_inner().into_iter().next() {
+                let word = word.as_span();
+                Statement::Break(Some(WordSpan::from_span(word, src)))
+            } else {
+                Statement::Break(None)
+            }
         }
         Rule::continue_stmt => {
-            let word = inner
-                .into_inner()
-                .into_iter()
-                .next()
-                .map(|x| x.as_str().into())
-                .unwrap_or("".into());
-
-            Statement::Continue(word)
+            if let Some(word) = inner.into_inner().into_iter().next() {
+                let word = word.as_span();
+                Statement::Continue(Some(WordSpan::from_span(word, src)))
+            } else {
+                Statement::Continue(None)
+            }
         }
         Rule::expr => Statement::Expr(parse_expr(Pairs::single(inner), pratt, src)),
         _ => unreachable!(),
@@ -606,7 +683,7 @@ fn parse_typed_args(
     pair: Pair<Rule>,
     pratt: &PrattParser<Rule>,
     src: &Rc<str>,
-) -> LinearMap<Box<str>, Type> {
+) -> LinearMap<WordSpan, Type> {
     if !(matches!(pair.as_rule(), Rule::typed_args_list)) {
         panic!("{:#?}", pair);
     }
@@ -615,10 +692,10 @@ fn parse_typed_args(
 
     for pair in pair.into_inner() {
         let mut typed_arg = pair.into_inner().into_iter();
-        let arg_name = typed_arg.next().unwrap();
+        let arg_name = typed_arg.next().unwrap().as_span();
         let arg_type = typed_arg.next().unwrap();
         let arg_type = parse_type(Pairs::single(arg_type), pratt, src);
-        map.insert(arg_name.as_str().into(), arg_type);
+        map.insert(WordSpan::from_span(arg_name, src), arg_type);
     }
 
     map
@@ -644,11 +721,7 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
                     parse_type(Pairs::single(word), pratt, src)
                 }
             }
-            Rule::word => {
-                let span = primary.as_span();
-                let (start, end) = (span.start(), span.end());
-                Type::Word(WordSpan::new(src.clone(), start..end))
-            }
+            Rule::word => Type::Word(WordSpan::from_span(primary.as_span(), src)),
             Rule::struct_decl => {
                 let mut iter = primary.into_inner().into_iter();
                 let typed_args_list = iter.next().unwrap();
@@ -665,18 +738,18 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
                     .unwrap()
                     .into_inner();
 
-                let mut map = LinearMap::<Box<str>, Vec<Type>>::new();
+                let mut map = LinearMap::new();
 
                 for enum_variant in enum_variants {
                     let mut iter = enum_variant.into_inner().into_iter();
-                    let word = iter.next().unwrap().as_str();
+                    let key_word = iter.next().unwrap().as_span();
                     let mut args = Vec::new();
                     if let Some(type_list) = iter.next() {
                         for type_name in type_list.into_inner().into_iter() {
                             args.push(parse_type(Pairs::single(type_name), pratt, src));
                         }
                     }
-                    map.insert(word.into(), args);
+                    map.insert(WordSpan::from_span(key_word, src), args);
                 }
 
                 Type::Enum { fields: map }
@@ -732,8 +805,6 @@ pub fn parse_blocks(input: &Rc<str>) -> Result<Vec<Declaration>, pest::error::Er
         }
     }
 
-    // panic!("rc count: {}", Rc::strong_count(&src));
-
     Ok(declarataions)
 }
 
@@ -758,5 +829,10 @@ fn test_pratt() {
 
     let decls = parse_blocks(&src).unwrap();
 
-    std::fs::write("/tmp/declarations", format!("{:#?}", decls)).unwrap();
+    let count = Rc::strong_count(&src);
+    std::fs::write(
+        "/tmp/declarations",
+        format!("{:#?}\nrc count: {}", decls, count),
+    )
+    .unwrap();
 }

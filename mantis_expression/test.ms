@@ -6,43 +6,43 @@ type Gen[T] = struct { a T, b ptr[T] }
 type Doo = i32
 type Node[T] = enum { None, Binary(Op, T, ptr[T]), Unary(Op, T) }
 
-// trait ToString {
-//     fn to_string(self @Self) String;
-// }
+trait ToString {
+    fn to_string(self Self) String;
+}
 
-// impl ToString for i64 {
-//     fn to_string(self @Self) String {
-//         mut s = String.new();
-//         mut i = self;
-//         if i < 0 {
-//             s.push('-');
-//         }
-//         i = i.abs();
+impl ToString for i64 {
+    fn to_string(self Self) String {
+        mut s = String.new();
+        mut i = self;
+        if i < 0 {
+            s.push('-');
+        }
+        i = i.abs();
 
-//         mut v = Vec.new();
-//         loop {
-//             let reminder = i % 10;
-//             v.push(reminder);
-//             i = i / 10;
+        mut v = Vec.new();
+        loop {
+            let reminder = i % 10;
+            v.push(reminder);
+            i = i / 10;
 
-//             if i == 0 {
-//                 break;
-//             }
-//         }
+            if i == 0 {
+                break;
+            }
+        }
 
-//         mut iter = v.into_iter().rev();
+        mut iter = v.into_iter().rev();
 
-//         loop {
-//             if Some(digit) = iter.next() {
-//                 s.push((48 + digit) as char);
-//             } else {
-//                 break;
-//             }
-//         }
+        loop {
+            if Some(digit) = iter.next() {
+                s.push((48 + digit) as char);
+            } else {
+                break;
+            }
+        }
 
-//         return s;
-//     }
-// }
+        return s;
+    }
+}
 
 
 
@@ -71,7 +71,7 @@ fn loop_test(n i32) i32 {
         println("{}", i);
         i = i - 1;
         if i < 0 {
-            break;
+            break my_loop;
         }
     }
 
@@ -104,6 +104,7 @@ fn enum_test() {
 
 fn struct_test() Foo {
 	let foo = Foo { a = 10, b = 20, doo = Doo { a = 10, b = 69 } };
+    foo.doo.b = 12;
 	return foo;
 }
 

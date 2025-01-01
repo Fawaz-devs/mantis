@@ -3,7 +3,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
 
   expr       =   { prefix* ~ primary ~ postfix* ~ (infix ~ prefix* ~ primary ~ postfix* )* }
-    infix    =  _{ eq | assign | cast | add | sub | mul | div | pow | not_eq | gt_eq | le_eq | le | ge | dot }
+    infix    =  _{ eq | assign | cast | modulus | add | sub | mul | div | pow | not_eq | gt_eq | le_eq | le | ge | dot }
       add    =   { "+" }
       sub    =   { "-" }
       mul    =   { "*" }
@@ -18,6 +18,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       dot    =   { "." }
       assign =   { "=" }
       cast   =   { "as" }
+      modulus = { "%" }
     prefix   =  _{ neg | at }
       neg    =   { "-" } 
       at     =   { "@" } 
@@ -48,7 +49,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       typed_arg = { word ~ type_name }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
       extern_word = { "extern" }
-      fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";")) }
+      fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";") | ";") }
       // cond_block = _{ if_block | elif_block | else_block }
       if_else_chain = { if_block ~ elif_block* ~ else_block? }
       
@@ -62,10 +63,10 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       enum_variant = { word ~ ("(" ~ type_list ~ ")")? }
       enum_variants = { enum_variant ~ ( "," ~ enum_variant )* }
       enum_decl = { "enum" ~ "{" ~  enum_variants ~ "}" }
-      declaration = _{ fn_decl | type_decl | use_decl }
+      declaration = _{ fn_decl | type_decl | use_decl | trait_decl | trait_impl }
       declarations = { declaration* }
       trait_decl = { "trait" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
-      trait_impl = { "impl" ~ type_name ~ "for" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
+      trait_impl = { "impl" ~ type_name ~ ( "for" ~ type_name )? ~ "{" ~ fn_decl* ~ "}" }
      
       string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
       char = @{ "'" ~ ANY ~ "'" }
