@@ -19,32 +19,58 @@ impl MsVarScopes {
         index
     }
 
-    pub fn exit_scope(
-        &mut self,
-        ctx: &mut MsContext,
-        fbx: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-    ) -> Option<()> {
-        let reg = self.scopes.pop()?;
+    pub fn exit_scope_until(&mut self, index: usize) {}
 
-        for (k, v) in reg.registry.into_iter().rev() {
-            if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", &v.ty.to_string()) {
-                let function = drop_trait
-                    .registry
-                    .get("drop")
-                    .expect(&format!("missing fn drop(self @mut Self); for {:?}", v.ty));
-                let func_ref = module.declare_func_in_func(function.func_id, fbx.func);
-                let val = fbx.use_var(v.c_var);
-                let _ = fbx.ins().call(func_ref, &[val]);
-
-                log::info!("Dropped {}", k);
-            }
-        }
-
-        Some(())
+    pub fn exit_scope(&mut self) -> Option<MsVarRegistry> {
+        self.scopes.pop()
     }
 
-    pub fn exit_scope_until(&mut self, index: usize) {}
+    pub fn find_variable(&self, name: &str) -> Option<&MsVar> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(var) = scope.registry.get(name) {
+                return Some(var);
+            }
+        }
+        return None;
+    }
+
+    pub fn add_variable(&mut self, var_name: impl Into<String>, var: MsVar) -> Option<MsVar> {
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .registry
+            .insert(var_name.into(), var)
+    }
+}
+
+pub fn drop_scope(
+    reg: MsVarRegistry,
+    ctx: &MsContext,
+    fbx: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+) {
+    for (k, v) in reg.registry.into_iter().rev() {
+        drop_variable(v, ctx, fbx, module);
+        log::info!("Dropped {}", k);
+    }
+}
+
+pub fn drop_variable(
+    var: MsVar,
+    ctx: &MsContext,
+    fbx: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+) {
+    let v = var;
+    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", &v.ty.to_string()) {
+        let function = drop_trait
+            .registry
+            .get("drop")
+            .expect(&format!("missing fn drop(self @mut Self); for {:?}", v.ty));
+        let func_ref = module.declare_func_in_func(function.func_id, fbx.func);
+        let val = fbx.use_var(v.c_var);
+        let _ = fbx.ins().call(func_ref, &[val]);
+    }
 }
 
 #[derive(Debug)]
@@ -126,4 +152,16 @@ impl Default for MsScopes {
     fn default() -> Self {
         Self { scopes: Vec::new() }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MsLoopScope {
+    pub name: Option<Box<str>>,
+    pub entry_block: Block,
+    pub exit_block: Block,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct MsLoopScopes {
+    pub scopes: Vec<MsLoopScope>,
 }

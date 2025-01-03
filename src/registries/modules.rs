@@ -1,4 +1,9 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::HashMap,
+    fs::FileType,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use mantis_expression::pratt::Type;
 
@@ -97,4 +102,43 @@ impl MsModule {
 
         todo!()
     }
+}
+
+pub enum ModuleEntry {
+    Module(String),
+    Dir(PathBuf),
+}
+
+pub fn resolve_module_by_word(include_dirs: &[String], module_name: &str) -> Option<ModuleEntry> {
+    for dir_path in include_dirs {
+        let dir = match std::fs::read_dir(dir_path) {
+            Ok(d) => d,
+            Err(err) => {
+                log::warn!("unable to read dir {}, error: {:?}", dir_path, err);
+                continue;
+            }
+        };
+        for entity in dir {
+            let entry = match entity {
+                Ok(d) => d,
+                Err(err) => {
+                    log::warn!("unable to read dir {}, error: {:?}", dir_path, err);
+                    continue;
+                }
+            };
+            let entry_name = entry.file_name();
+            let file_name = entry_name.to_str().expect("invalid os string");
+            if file_name == module_name && entry.file_type().unwrap().is_dir() {
+                return Some(ModuleEntry::Dir(entry.path()));
+            } else if file_name.len() == module_name.len() + 3
+                && file_name.starts_with(module_name)
+                && file_name.ends_with(".ms")
+            {
+                let content = std::fs::read_to_string(entry.path())
+                    .expect(&format!("Failed to read {:?}", entry.path()));
+                return Some(ModuleEntry::Module(content));
+            }
+        }
+    }
+    return None;
 }

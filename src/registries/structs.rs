@@ -3,12 +3,12 @@ use std::{
     rc::Rc,
 };
 
-use cranelift::prelude::{types, AbiParam, FunctionBuilder, InstBuilder};
+use cranelift::prelude::{types, AbiParam, FunctionBuilder, InstBuilder, MemFlags};
 use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use linear_map::LinearMap;
 
-use crate::{frontend::compile::MsContext, native::instructions::Either};
+use crate::{frontend::tokens::MsContext, native::instructions::Either};
 
 use super::{
     types::{MsGenericTemplate, MsGenericType, MsType},
@@ -70,7 +70,7 @@ impl MsStructType {
     pub fn set_data(
         &self,
         ptr: MsVal,
-        values: BTreeMap<String, MsVal>,
+        values: HashMap<String, MsVal>,
         ms_ctx: &mut MsContext,
         fbx: &mut FunctionBuilder<'_>,
         module: &mut ObjectModule,
@@ -81,13 +81,25 @@ impl MsStructType {
             if !v.ty.equal(&val.ty) {
                 panic!("Types don match {:?} != {:?}", v.ty, val.ty);
             }
-
-            let field = self.get_field(k).unwrap();
-            let offset = fbx.ins().iconst(types::I64, field.offset as i64);
-            let field_ptr = fbx.ins().iadd(ptr.value, offset);
-
-            todo!()
+            self.set_field(&ptr, k.as_str(), val, ms_ctx, fbx, module);
         }
+    }
+    pub fn set_field(
+        &self,
+        ptr: &MsVal,
+        field_name: &str,
+        value: &MsVal,
+        ms_ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder<'_>,
+        module: &mut ObjectModule,
+    ) {
+        let field = self.get_field(field_name).unwrap();
+        fbx.ins().store(
+            MemFlags::new(),
+            value.value(),
+            ptr.value(),
+            field.offset as i32,
+        );
     }
 }
 

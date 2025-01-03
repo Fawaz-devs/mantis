@@ -1,3 +1,4 @@
 error reporting, keeping track of position of the syntax tree
 differentiate enum and module nesting from regulare expressions
 take care of enum expressions misinterpreting as function calls
+binary operations with new parser

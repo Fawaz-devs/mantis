@@ -1,77 +1,68 @@
+use std::path::PathBuf;
+
 use cranelift::{
     codegen::Context,
-    prelude::{types, AbiParam, FunctionBuilder, FunctionBuilderContext},
+    prelude::{settings, types, AbiParam, Configurable, FunctionBuilder, FunctionBuilderContext},
 };
-use cranelift_module::{Linkage, Module};
-use cranelift_object::ObjectModule;
-use mantis_expression::pratt::{Block, FunctionDecl, Type};
+use cranelift_module::{default_libcall_names, DataDescription, Linkage, Module};
+use cranelift_object::{ObjectBuilder, ObjectModule};
+use mantis_expression::pratt::{Block, Declaration, FunctionDecl, Type};
 
-use crate::{frontend::tokens::MsContext, registries::types::MsTypeRegistry};
+use crate::{
+    frontend::tokens::MsContext,
+    registries::{modules::resolve_module_by_word, types::MsTypeRegistry},
+};
 
-pub enum FinalType {
-    Name(Box<str>),
-    Type(Type),
-    CraneliftType(types::Type),
-}
+use super::compile_function::compile_function;
 
-pub fn resolve_typename(ty: &Type) -> Box<str> {
-    match ty {
-        Type::Enum { fields } => todo!(),
-        Type::Struct { fields } => todo!(),
-        Type::WithGenerics(_, vec) => todo!(),
-        Type::Nested(_, _) => todo!(),
-        Type::Unknown => todo!(),
-        Type::Word(word_span) => todo!(),
-        Type::Ref(_, _) => todo!(),
-    }
-}
+pub fn compile_binary(
+    declarations: Vec<Declaration>,
+    include_dirs: Vec<String>,
+    module_name: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let data_description = DataDescription::new();
+    let mut flag_builder = settings::builder();
+    flag_builder.set("preserve_frame_pointers", "true");
+    let isa_builder = cranelift_native::builder().map_err(|x| anyhow::anyhow!(x))?;
+    let isa = isa_builder.finish(settings::Flags::new(flag_builder))?;
+    let libcalls = default_libcall_names();
+    let mut module = ObjectModule::new(ObjectBuilder::new(isa.clone(), module_name, libcalls)?);
+    let mut fbx = FunctionBuilderContext::new();
+    let mut ctx = module.make_context();
+    let mut ms_ctx = MsContext::new(0);
 
-pub fn type_name_into_cranelift_type(ty_name: &str, ctx: &MsContext) -> Option<types::Type> {
-    todo!()
-}
+    for declaration in declarations {
+        match declaration {
+            Declaration::Function(function_decl) => {
+                compile_function(function_decl, &mut module, &mut ctx, &mut fbx, &mut ms_ctx);
+            }
+            Declaration::Type(name, ty) => {
+                todo!("add types to ms_context");
+            }
+            Declaration::Use(_use_decl) => {
+                // let mut iter = use_decl.path.iter();
+                // let entry = resolve_module_by_word(&include_dirs, &word)
+                //     .expect(&format!("unresolved module {:?}", use_decl.path));
+                // match entry {
+                //     crate::registries::modules::ModuleEntry::Module(content) => {
 
-pub fn compile_function(
-    function: &FunctionDecl,
-    module: &mut ObjectModule,
-    ctx: &mut Context,
-    fbx: &mut FunctionBuilderContext,
-    ms_ctx: &mut MsContext,
-) {
-    let name = resolve_typename(&function.name);
-
-    let mut linkage = Linkage::Preemptible;
-
-    if function.is_extern {
-        if matches!(function.block, Block::Empty) {
-            linkage = Linkage::Import;
-        } else {
-            linkage = Linkage::Export;
+                //     }
+                //     crate::registries::modules::ModuleEntry::Dir(path) => {
+                //         path_buf = path;
+                //     }
+                // }
+                todo!("use decl should compile the modules");
+            }
+            Declaration::Trait(trait_decl) => todo!("add traits to ms_context"),
+            Declaration::TraitImpl(trait_decl, _) => {
+                todo!("add functions from trait implementations to ms_context")
+            }
         }
-    } else {
-        for (_k, v) in &function.arguments {
-            let Some(ty) = type_name_into_cranelift_type(&resolve_typename(v), &ms_ctx) else {
-                unreachable!()
-            };
-
-            ctx.func.signature.params.push(AbiParam::new(ty));
-        }
-        {
-            if let Some(ty) =
-                type_name_into_cranelift_type(&resolve_typename(&function.return_type), &ms_ctx)
-            {
-                ctx.func.signature.returns.push(AbiParam::new(ty));
-            } else {
-            };
-        }
-
-        let mut f = FunctionBuilder::new(&mut ctx.func, fbx);
-        compile_block(&function.block, module, &mut f);
     }
 
-    let func_id = module
-        .declare_function(&name, linkage, &ctx.func.signature)
-        .unwrap();
-    module.define_function(func_id, ctx).unwrap();
-    ctx.clear();
+    let object_product = module.finish();
+
+    let bytes = object_product.emit()?;
+
+    Ok(bytes)
 }
-pub fn compile_block(function: &Block, module: &mut ObjectModule, fbx: &mut FunctionBuilder) {}

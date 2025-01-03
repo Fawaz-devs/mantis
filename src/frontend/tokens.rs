@@ -19,12 +19,12 @@ use crate::{
             FunctionType, MsFunctionRegistry, MsFunctionTemplates, MsFunctionType, MsTraitRegistry,
             MsTraitTemplates,
         },
-        modules::MsModuleRegistry,
+        modules::{MsModule, MsModuleRegistry},
         types::{MsNativeType, MsType, MsTypeRegistry, MsTypeTemplates},
         variable::{MsVal, MsVar, MsVarRegistry},
         MsRegistry, MsRegistryExt,
     },
-    scope::{MsScopes, MsVarScopes},
+    scope::{MsLoopScopes, MsScopes, MsVarScopes},
 };
 
 use super::tokenizer::parse_fn_call_args;
@@ -661,11 +661,13 @@ pub struct MsContext {
     pub type_templates: MsTypeTemplates,
     pub scopes: MsScopes,
     pub var_scopes: MsVarScopes,
+    pub loop_scopes: MsLoopScopes,
     pub fn_registry: MsFunctionRegistry,
     pub fn_templates: MsFunctionTemplates,
     pub trait_registry: MsTraitRegistry,
     pub trait_templates: MsTraitTemplates,
     pub modules: MsModuleRegistry,
+    pub current_module: MsModule,
 }
 
 pub struct FunctionSignature {
@@ -686,6 +688,7 @@ pub struct MsTypeContext {
 impl MsContext {
     pub fn new(offset: usize) -> Self {
         Self {
+            current_module: Default::default(),
             variable_index: offset,
             scopes: Default::default(),
             type_registry: Default::default(),
@@ -696,6 +699,7 @@ impl MsContext {
             trait_templates: Default::default(),
             var_scopes: Default::default(),
             modules: Default::default(),
+            loop_scopes: Default::default(),
         }
     }
 

@@ -2,7 +2,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use cranelift_module::FuncId;
 use linear_map::LinearMap;
-use mantis_expression::pratt::FunctionDecl;
+use mantis_expression::pratt::{FunctionDecl, WordSpan};
 
 use crate::frontend::tokens::MsFunctionDeclaration;
 
@@ -24,8 +24,8 @@ pub struct MsFunctionType {
 
 #[derive(Clone, Debug)]
 pub struct MsDeclaredFunction {
-    pub arguments: LinearMap<Box<str>, MsType>,
-    pub rets: MsType,
+    pub arguments: LinearMap<WordSpan, mantis_expression::pratt::Type>, // var_name -> type
+    pub rets: mantis_expression::pratt::Type,
     pub fn_type: FunctionType,
     pub func_id: FuncId,
 }
@@ -42,7 +42,7 @@ impl From<&MsFunctionDeclaration> for MsFunctionType {
 
 #[derive(Debug)]
 pub struct MsFunctionRegistry {
-    pub registry: HashMap<String, Rc<MsDeclaredFunction>>,
+    pub registry: HashMap<Box<str>, Rc<MsDeclaredFunction>>,
 }
 
 impl Default for MsFunctionRegistry {

@@ -18,6 +18,7 @@ use super::{
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsNativeType {
+    Char,
     Bool,
     Void,
     Array,
@@ -39,7 +40,7 @@ impl MsNativeType {
         match self {
             Self::Bool | Self::I8 | Self::U8 => 1,
             Self::I16 | Self::U16 => 2,
-            Self::I32 | Self::U32 | Self::F32 => 4,
+            Self::Char | Self::I32 | Self::U32 | Self::F32 => 4,
             Self::I64 | Self::U64 | Self::F64 => 8,
             _ => {
                 panic!("unhandled type {:?}", self);
@@ -66,6 +67,7 @@ impl MsNativeType {
             "f64" => Self::F64,
             "array" => Self::Array,
             "bool" => Self::Bool,
+            "char" => Self::Char,
             _ => {
                 return None;
             }
@@ -272,6 +274,7 @@ impl MsNativeType {
             MsNativeType::U8 => "U8",
             MsNativeType::I16 => "I16",
             MsNativeType::U16 => "U16",
+            MsNativeType::Char => "char",
         }
     }
 }
@@ -363,7 +366,7 @@ impl MsGenericTemplate {
         st
     }
 
-    pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved<'_>>) -> MsType {
+    pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved>) -> MsType {
         todo!()
     }
 }
@@ -390,8 +393,7 @@ impl Hash for MsType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
             MsType::Native(ty) => state.write(ty.to_string().as_bytes()),
-            MsType::Struct(rc) => todo!(),
-            MsType::Ref(ms_type, _) => todo!(),
+            _ => todo!(),
         }
     }
 }
@@ -401,6 +403,7 @@ impl MsType {
         match (self, ty) {
             (MsType::Native(t0), MsType::Native(t1)) => t0 == t1,
             (MsType::Struct(t0), MsType::Struct(t1)) => Rc::ptr_eq(t0, t1),
+            (MsType::Ref(t0, m0), MsType::Ref(t1, m1)) => m0 == m1 && t0 == t1,
             _ => false,
         }
     }
@@ -409,6 +412,10 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.size(),
             MsType::Struct(ty) => ty.size(),
+            MsType::Ref(_ty, _) => {
+                log::warn!("using hardcoded ref(pointer) size of 8 bytes");
+                8
+            }
             _ => todo!(),
         }
     }

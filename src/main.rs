@@ -38,6 +38,9 @@ struct Args {
 
     #[arg(long, short)]
     shared_lib: bool,
+
+    #[arg(long, short)]
+    module_name: Option<String>,
 }
 
 fn main() {
@@ -71,8 +74,8 @@ fn handle0(args: Args) {
 
     let src = Rc::from(input.clone());
 
-    let declarations = mantis_expression::pratt::parse_blocks(&src);
-
+    let declarations = mantis_expression::pratt::parse_blocks(&src).expect("Unparsed declarations");
+    let include_dirs = Vec::new();
     // let (fns, sr) = collect_functions(input);
 
     if let Some(ast_path) = args.ast {
@@ -92,8 +95,12 @@ fn handle0(args: Args) {
 
     if let Some(obj_file_path) = args.obj {
         {
+            let module_name = args.module_name.unwrap_or("main".to_string());
+            let bytes =
+                backend::compile::compile_binary(declarations, include_dirs, &module_name).unwrap();
             // let bytes = compiler::ms_compile(fns, sr, fr).unwrap();
-            // std::fs::write(&obj_file_path, bytes).unwrap();
+            std::fs::write(&obj_file_path, &bytes).unwrap();
+            log::info!("wrote {} bytes {}", bytes.len(), obj_file_path);
         }
         let mut cmd_args = Vec::with_capacity(6);
         cmd_args.push(obj_file_path.as_str());

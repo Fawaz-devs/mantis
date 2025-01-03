@@ -39,6 +39,10 @@ impl WordSpan {
     pub fn as_str(&self) -> &str {
         &self
     }
+
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
 }
 
 impl Debug for WordSpan {
