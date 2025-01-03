@@ -35,6 +35,10 @@ impl WordSpan {
     pub fn from_span(span: Span, src: &Rc<str>) -> Self {
         Self::new(src.clone(), span.start()..span.end())
     }
+
+    pub fn as_str(&self) -> &str {
+        &self
+    }
 }
 
 impl Debug for WordSpan {
@@ -168,6 +172,29 @@ pub enum Type {
     Unknown,
 }
 
+impl Type {
+    pub fn to_string(&self) -> String {
+        match self {
+            Self::Word(word) => word.as_str().into(),
+            Self::WithGenerics(ty, generics) => {
+                let mut s = String::new();
+                s.push_str(&ty.to_string());
+
+                if !generics.is_empty() {
+                    s.push_str("_[");
+                    for gen in generics {
+                        s.push_str(&gen.to_string());
+                        s.push(',');
+                    }
+                    s.push_str("]");
+                }
+                s
+            }
+            _ => todo!(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct FunctionDecl {
     pub name: Type,
@@ -194,8 +221,8 @@ pub enum Declaration {
 
 #[derive(Debug)]
 pub struct TraitDecl {
-    name: Type,
-    functions: Vec<FunctionDecl>,
+    pub name: Type,
+    pub functions: Vec<FunctionDecl>,
 }
 
 fn get_pratt_parser() -> PrattParser<Rule> {
@@ -218,15 +245,6 @@ fn get_pratt_parser() -> PrattParser<Rule> {
         .op(Op::infix(Rule::cast, Assoc::Right))
         .op(Op::prefix(Rule::at))
         .op(Op::infix(Rule::dot, Assoc::Left))
-}
-
-fn pratt_parse(input: &str) -> anyhow::Result<Node> {
-    let pairs = ExpressionParser::parse(Rule::expr, input).unwrap();
-    let pratt = get_pratt_parser();
-    let src = Rc::from(input);
-
-    let node = parse_expr(pairs, &pratt, &src);
-    Ok(node)
 }
 
 fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Node {
@@ -492,13 +510,10 @@ fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
                 is_extern,
             };
         }
-        // next = iter.next().unwrap();
         ret_ty
     } else {
-        Type::Word("void".into())
+        Type::Unknown
     };
-
-    // let mut blocks = Vec::new();
 
     if matches!(next.as_rule(), Rule::block) {
         loop {
@@ -704,30 +719,7 @@ fn parse_typed_args(
     map
 }
 
-fn parse_type(mut pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Type {
-    // dbg!(&pairs);
-    // let first = pairs.next().unwrap();
-
-    // let mut iter = first.into_inner().into_iter();
-    // let mut arg_type = iter.next().unwrap();
-
-    // dbg!(&arg_type);
-
-    // let mut is_mutable = false;
-    // let mut is_reference = false;
-
-    // if matches!(arg_type.as_rule(), Rule::at) {
-    //     is_reference = true;
-    //     arg_type = iter.next().unwrap();
-    // }
-    // if matches!(arg_type.as_rule(), Rule::mut_word) {
-    //     is_mutable = true;
-    //     arg_type = iter.next().unwrap();
-    // }
-
-    // let arg_type = Pairs::single(arg_type);
-    // dbg!(&arg_type);
-
+fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> Type {
     pratt
         .map_primary(|primary| match primary.as_rule() {
             Rule::type_name => {
@@ -835,8 +827,6 @@ fn parse_expr_list(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -
 pub fn parse_blocks(input: &Rc<str>) -> Result<Vec<Declaration>, pest::error::Error<Rule>> {
     let pratt = get_pratt_parser();
     let pairs = ExpressionParser::parse(Rule::declarations, input)?;
-
-    // let pairs = pairs.into_iter().next().unwrap().into_inner();
     let mut declarataions = Vec::new();
     for pair in pairs.into_iter() {
         let inner_pair = pair.into_inner();
@@ -853,20 +843,6 @@ pub fn parse_blocks(input: &Rc<str>) -> Result<Vec<Declaration>, pest::error::Er
 
 #[test]
 fn test_pratt() {
-    let inputs = [
-        // "g = a+1.2*70-c.d.e(0, 2).to_int().unwrap(7) *@f * foo(a+2.3, b as f64)",
-        // "g = a as i32",
-        // "g = a + b",
-        // "g = @a.b as f64 + g() + f(a, b == 0)",
-        "a != b",
-        "g = a == b * 'd'",
-        r#"g = "hello wor\nld""#,
-    ];
-    for input in inputs {
-        let node = pratt_parse(input).unwrap();
-        dbg!(node);
-    }
-
     let code = std::fs::read_to_string("test.ms").unwrap();
     let src = code.into();
 

@@ -62,25 +62,15 @@ pub fn read_to_tokens(input: String) -> (Vec<FunctionDeclaration>, MsTypeRegistr
     return (functions, type_registry);
 }
 
-pub fn collect_functions(
-    input: String,
-) -> (
-    Vec<MsFunctionDeclaration>,
-    MsTypeRegistry,
-    MsFunctionRegistry,
-) {
+pub fn collect_functions(input: String) -> (Vec<MsFunctionDeclaration>, MsTypeRegistry) {
     let mut lexer = MantisLexerTokens::lexer(&input);
-
     let mut functions = Vec::new();
-
-    let mut fn_registry = MsFunctionRegistry::default();
     let mut type_registry = MsTypeRegistry::default();
 
     while let Some(token) = lexer.next() {
         match token {
             Ok(MantisLexerTokens::FunctionDecl) => {
                 let decl = parse_ms_fn_declaration(&mut lexer, &type_registry);
-                fn_registry.add(decl.name.clone(), MsFunctionType::from(&decl));
                 functions.push(decl);
             }
 
@@ -96,18 +86,18 @@ pub fn collect_functions(
         };
     }
 
-    return (functions, type_registry, fn_registry);
+    return (functions, type_registry);
 }
 
-fn parse_type(lexer: &mut Lexer<'_, MantisLexerTokens>) {
-    match lexer.next().unwrap().unwrap() {
-        MantisLexerTokens::Word(word) => {}
-        MantisLexerTokens::SqBracketOpen => {}
-        MantisLexerTokens::SqBracketClose => {}
-        MantisLexerTokens::Comma => {}
-        _ => {}
-    };
-}
+// fn parse_type(lexer: &mut Lexer<'_, MantisLexerTokens>) {
+//     match lexer.next().unwrap().unwrap() {
+//         MantisLexerTokens::Word(word) => {}
+//         MantisLexerTokens::SqBracketOpen => {}
+//         MantisLexerTokens::SqBracketClose => {}
+//         MantisLexerTokens::Comma => {}
+//         _ => {}
+//     };
+// }
 
 fn parse_type_decl(lexer: &mut Lexer<'_, MantisLexerTokens>, type_registry: &mut MsTypeRegistry) {
     let type_name = lexer.next().unwrap();
@@ -367,15 +357,15 @@ pub fn parse_expression(
                     expression = Expression::Scope(super::tokens::ScopeType::Else, scope);
                 } else if if_begun {
                     log::info!("if scope with condition {:?}", tokens);
-                    let node = Node::parse(&tokens).unwrap();
-                    expression = Expression::Scope(super::tokens::ScopeType::If(node), scope);
+                    // let node = Node::parse(&tokens).unwrap();
+                    // expression = Expression::Scope(super::tokens::ScopeType::If(node), scope);
                 } else if elseif_begun {
                     log::info!("if scope with condition {:?}", tokens);
-                    let node = Node::parse(&tokens).unwrap();
-                    expression = Expression::Scope(super::tokens::ScopeType::ElseIf(node), scope);
+                    // let node = Node::parse(&tokens).unwrap();
+                    // expression = Expression::Scope(super::tokens::ScopeType::ElseIf(node), scope);
                 }
 
-                break;
+                todo!();
             }
             Ok(token) => {
                 tokens.push(token);
@@ -475,28 +465,29 @@ pub fn parse_ms_expression_and_append(
 }
 
 pub fn parse_let_expression(tokens: &[MantisLexerTokens]) -> Option<Expression> {
-    if let (Some(MantisLexerTokens::Word(var_name)), Some(MantisLexerTokens::Assign)) =
-        (tokens.get(0), tokens.get(1))
-    {
-        return Some(Expression::Declare(
-            MsVariable::new(var_name, VariableType::BuiltIn(BuiltInType::I64)),
-            Node::parse(&tokens[2..])
-                .expect(&format!("Node Parse Failed with Tokens {:?}", tokens)),
-        ));
-    } else if let (
-        Some(MantisLexerTokens::Word(var_name)),
-        Some(MantisLexerTokens::Colon),
-        Some(MantisLexerTokens::Word(type_name)),
-        Some(MantisLexerTokens::Assign),
-    ) = (tokens.get(0), tokens.get(1), tokens.get(2), tokens.get(3))
-    {
-        return Some(Expression::Declare(
-            MsVariable::new(var_name, VariableType::BuiltIn(BuiltInType::I64)),
-            Node::parse(&tokens[4..])
-                .expect(&format!("Node Parse Failed with Tokens {:?}", tokens)),
-        ));
-    }
-    None
+    todo!();
+    // if let (Some(MantisLexerTokens::Word(var_name)), Some(MantisLexerTokens::Assign)) =
+    //     (tokens.get(0), tokens.get(1))
+    // {
+    //     return Some(Expression::Declare(
+    //         MsVariable::new(var_name, VariableType::BuiltIn(BuiltInType::I64)),
+    //         Node::parse(&tokens[2..])
+    //             .expect(&format!("Node Parse Failed with Tokens {:?}", tokens)),
+    //     ));
+    // } else if let (
+    //     Some(MantisLexerTokens::Word(var_name)),
+    //     Some(MantisLexerTokens::Colon),
+    //     Some(MantisLexerTokens::Word(type_name)),
+    //     Some(MantisLexerTokens::Assign),
+    // ) = (tokens.get(0), tokens.get(1), tokens.get(2), tokens.get(3))
+    // {
+    //     return Some(Expression::Declare(
+    //         MsVariable::new(var_name, VariableType::BuiltIn(BuiltInType::I64)),
+    //         Node::parse(&tokens[4..])
+    //             .expect(&format!("Node Parse Failed with Tokens {:?}", tokens)),
+    //     ));
+    // }
+    // None
 }
 
 pub fn parse_let_to_ms_expression(
@@ -536,20 +527,21 @@ pub fn parse_let_to_ms_expression(
 }
 
 pub fn parse_line_expression(tokens: Vec<MantisLexerTokens>) -> Expression {
-    if let Some(token) = tokens.first() {
-        match token {
-            MantisLexerTokens::Let => return parse_let_expression(&tokens[1..]).unwrap(),
-            MantisLexerTokens::Return => {
-                return Expression::Return(Node::parse(&tokens[1..]).unwrap());
-            }
-            _ => {
-                return Expression::Operation(Node::parse(&tokens).unwrap());
-            }
-        }
-    } else {
-        return Expression::Nil;
-    }
-    panic!("Invalid expression not supported");
+    todo!();
+    // if let Some(token) = tokens.first() {
+    //     match token {
+    //         MantisLexerTokens::Let => return parse_let_expression(&tokens[1..]).unwrap(),
+    //         MantisLexerTokens::Return => {
+    //             return Expression::Return(Node::parse(&tokens[1..]).unwrap());
+    //         }
+    //         _ => {
+    //             return Expression::Operation(Node::parse(&tokens).unwrap());
+    //         }
+    //     }
+    // } else {
+    //     return Expression::Nil;
+    // }
+    // panic!("Invalid expression not supported");
 }
 
 // returns how many expressions were appended
@@ -586,17 +578,18 @@ pub fn parse_line_and_append(
 }
 
 pub fn parse_fn_call_args(tokens: &[MantisLexerTokens]) -> Vec<Node> {
-    let mut args = Vec::new();
+    todo!();
+    // let mut args = Vec::new();
 
-    for chunk in tokens.split(|x| *x == MantisLexerTokens::Comma) {
-        if let Ok(arg) = (Node::parse(chunk)) {
-            args.push(arg);
-        } else {
-            break;
-        }
-    }
+    // for chunk in tokens.split(|x| *x == MantisLexerTokens::Comma) {
+    //     if let Ok(arg) = (Node::parse(chunk)) {
+    //         args.push(arg);
+    //     } else {
+    //         break;
+    //     }
+    // }
 
-    return args;
+    // return args;
 }
 
 pub fn parse_fn_declared_arguments(tokens: &mut Lexer<MantisLexerTokens>) -> Vec<MsVariable> {

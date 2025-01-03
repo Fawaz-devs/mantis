@@ -1,21 +1,13 @@
-use std::{
-    cell::RefCell,
-    rc::{Rc, Weak},
-};
-
-use cranelift::prelude::{Block, FunctionBuilder};
+use cranelift::prelude::{Block, FunctionBuilder, InstBuilder};
+use cranelift_module::Module;
+use cranelift_object::ObjectModule;
 
 use crate::{
-    frontend::tokens::{MsClScope, MsClScopeType, MsScopeType},
-    registries::{
-        functions::MsFunctionRegistry,
-        types::MsTypeRegistry,
-        variable::{MsVar, MsVarRegistry},
-        MsRegistry, MsRegistryExt,
-    },
+    frontend::tokens::{MsClScope, MsClScopeType, MsContext, MsScopeType},
+    registries::variable::{MsVar, MsVarRegistry},
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MsVarScopes {
     pub scopes: Vec<MsVarRegistry>,
 }
@@ -27,10 +19,27 @@ impl MsVarScopes {
         index
     }
 
-    pub fn exit_scope(&mut self, fn_registry: &mut MsFunctionRegistry) -> Option<()> {
+    pub fn exit_scope(
+        &mut self,
+        ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+    ) -> Option<()> {
         let reg = self.scopes.pop()?;
 
-        for (k, v) in reg.get_registry() {}
+        for (k, v) in reg.registry.into_iter().rev() {
+            if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", &v.ty.to_string()) {
+                let function = drop_trait
+                    .registry
+                    .get("drop")
+                    .expect(&format!("missing fn drop(self @mut Self); for {:?}", v.ty));
+                let func_ref = module.declare_func_in_func(function.func_id, fbx.func);
+                let val = fbx.use_var(v.c_var);
+                let _ = fbx.ins().call(func_ref, &[val]);
+
+                log::info!("Dropped {}", k);
+            }
+        }
 
         Some(())
     }
@@ -76,7 +85,7 @@ impl MsScopes {
 
     pub fn get_variable(&self, var_name: &str) -> Option<&MsVar> {
         for scope in self.scopes.iter().rev() {
-            match scope.variables.get_registry().get(var_name) {
+            match scope.variables.registry.get(var_name) {
                 Some(var) => return Some(var),
                 None => continue,
             };

@@ -1,19 +1,18 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
     rc::Rc,
 };
 
 use codegen::ir::{condcodes, Inst};
 use cranelift::prelude::*;
-use cranelift_object::ObjectModule;
-use linear_map::{set::LinearSet, LinearMap};
-use mantis_expression::node::{BinaryOperation, Node};
+use linear_map::LinearMap;
+use mantis_expression::node::BinaryOperation;
 
-use crate::{frontend::compile::MsContext, native::instructions::Either};
+use crate::native::instructions::Either;
 
 use super::{
-    functions::MsFunctionType,
-    structs::{array_struct, pointer_template, MsStructType},
+    structs::{pointer_template, MsStructType},
     MsRegistry, MsRegistryExt,
 };
 
@@ -256,6 +255,25 @@ impl MsNativeType {
     ) -> Inst {
         fbx.ins().store(MemFlags::new(), rhs, ptr, offset)
     }
+
+    fn to_string(&self) -> &'static str {
+        match self {
+            MsNativeType::Bool => "bool",
+            MsNativeType::Void => "void",
+            MsNativeType::Array => "array",
+            MsNativeType::Function => "function",
+            MsNativeType::I64 => "i64",
+            MsNativeType::I32 => "i32",
+            MsNativeType::F32 => "f32",
+            MsNativeType::F64 => "f64",
+            MsNativeType::U32 => "u32",
+            MsNativeType::U64 => "u64",
+            MsNativeType::I8 => "I8",
+            MsNativeType::U8 => "U8",
+            MsNativeType::I16 => "I16",
+            MsNativeType::U16 => "U16",
+        }
+    }
 }
 
 fn binary_cmp_op_to_condcode_fcc(op: BinaryOperation) -> condcodes::FloatCC {
@@ -335,13 +353,18 @@ impl MsGenericTemplate {
                 MsType::Struct(field) => {
                     st.add_field(k, MsType::Struct(field.clone()));
                 }
-                MsType::Generic(gen) => {
-                    let field = gen.to_struct(generics);
-                    st.add_field(k, MsType::Struct(Rc::new(field)));
-                }
+                // MsType::Generic(gen) => {
+                //     let field = gen.to_struct(generics);
+                //     st.add_field(k, MsType::Struct(Rc::new(field)));
+                // }
+                MsType::Ref(ms_type, _) => todo!(),
             };
         }
         st
+    }
+
+    pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved<'_>>) -> MsType {
+        todo!()
     }
 }
 
@@ -349,7 +372,28 @@ impl MsGenericTemplate {
 pub enum MsType {
     Native(MsNativeType),
     Struct(Rc<MsStructType>),
-    Generic(Rc<MsGenericTemplate>),
+    Ref(Box<MsType>, bool),
+}
+
+impl PartialEq for MsType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (MsType::Native(ty1), MsType::Native(ty2)) => ty1 == ty2,
+            (MsType::Struct(ty1), MsType::Struct(ty2)) => Rc::ptr_eq(ty1, ty2),
+            (MsType::Ref(ty1, mut1), MsType::Ref(ty2, mut2)) => ty1 == ty2 && mut1 == mut2,
+            _ => false,
+        }
+    }
+}
+
+impl Hash for MsType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            MsType::Native(ty) => state.write(ty.to_string().as_bytes()),
+            MsType::Struct(rc) => todo!(),
+            MsType::Ref(ms_type, _) => todo!(),
+        }
+    }
 }
 
 impl MsType {
@@ -365,7 +409,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.size(),
             MsType::Struct(ty) => ty.size(),
-            MsType::Generic(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -373,7 +417,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.align(),
             MsType::Struct(ty) => ty.align(),
-            MsType::Generic(_) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -381,22 +425,28 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.to_abi_param(),
             MsType::Struct(ty) => Some(ty.to_abi_param()),
-            MsType::Generic(_) => todo!(),
+            _ => todo!(),
         }
     }
 
     pub fn to_cl_type(&self) -> Option<Type> {
         match self {
             MsType::Native(ty) => ty.to_cl_type(),
-            MsType::Struct(ty) => todo!(),
-            MsType::Generic(_) => todo!(),
+            _ => todo!(),
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        match self {
+            MsType::Native(ty) => ty.to_string().into(),
+            _ => todo!(),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct MsTypeRegistry {
-    registry: HashMap<String, MsType>,
+    pub registry: HashMap<String, MsType>,
 }
 
 impl MsRegistry<MsType> for MsTypeRegistry {
@@ -453,7 +503,7 @@ impl Default for MsTypeRegistry {
             );
         }
 
-        registry.insert("pointer".into(), MsType::Generic(Rc::new(pointer_ty)));
+        // registry.insert("pointer".into(), MsType::Generic(Rc::new(pointer_ty)));
 
         // registry.insert("str".into(), MsType::Native(MsNativeType::Array));
 
@@ -478,8 +528,13 @@ impl MsRegistryExt<MsGenericTemplate> for MsTemplateRegistry {}
 
 impl Default for MsTemplateRegistry {
     fn default() -> Self {
-        let mut registry = HashMap::<String, MsGenericTemplate>::with_capacity(512);
+        let registry = HashMap::<String, MsGenericTemplate>::with_capacity(512);
 
         Self { registry }
     }
+}
+
+#[derive(Default, Debug)]
+pub struct MsTypeTemplates {
+    pub registry: HashMap<Box<str>, Rc<MsGenericTemplate>>,
 }

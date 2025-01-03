@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 pub mod compiler_functions;
 pub mod functions;
+pub mod modules;
 pub mod structs;
 pub mod types;
 pub mod variable;

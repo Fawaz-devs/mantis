@@ -217,7 +217,8 @@ fn translate_binary_op(
 
                 let signature = ms_ctx
                     .fn_registry
-                    .get(&fn_name)
+                    .registry
+                    .get(fn_name.as_str())
                     .expect("Undeclared function");
 
                 log::info!("Calling {} with signature {:?}", fn_name, signature);

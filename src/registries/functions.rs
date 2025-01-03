@@ -1,4 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
+
+use cranelift_module::FuncId;
+use linear_map::LinearMap;
+use mantis_expression::pratt::FunctionDecl;
 
 use crate::frontend::tokens::MsFunctionDeclaration;
 
@@ -18,6 +22,14 @@ pub struct MsFunctionType {
     pub fn_type: FunctionType,
 }
 
+#[derive(Clone, Debug)]
+pub struct MsDeclaredFunction {
+    pub arguments: LinearMap<Box<str>, MsType>,
+    pub rets: MsType,
+    pub fn_type: FunctionType,
+    pub func_id: FuncId,
+}
+
 impl From<&MsFunctionDeclaration> for MsFunctionType {
     fn from(value: &MsFunctionDeclaration) -> Self {
         Self {
@@ -30,20 +42,8 @@ impl From<&MsFunctionDeclaration> for MsFunctionType {
 
 #[derive(Debug)]
 pub struct MsFunctionRegistry {
-    registry: HashMap<String, MsFunctionType>,
+    pub registry: HashMap<String, Rc<MsDeclaredFunction>>,
 }
-
-impl MsRegistry<MsFunctionType> for MsFunctionRegistry {
-    fn get_registry(&self) -> &HashMap<String, MsFunctionType> {
-        &self.registry
-    }
-
-    fn get_registry_mut(&mut self) -> &mut HashMap<String, MsFunctionType> {
-        &mut self.registry
-    }
-}
-
-impl MsRegistryExt<MsFunctionType> for MsFunctionRegistry {}
 
 impl Default for MsFunctionRegistry {
     fn default() -> Self {
@@ -54,11 +54,34 @@ impl Default for MsFunctionRegistry {
 
 #[derive(Debug, Default)]
 pub struct MsTraitRegistry {
-    registry: HashMap<String, HashMap<String, MsFunctionType>>,
+    pub registry: HashMap<Box<str>, HashMap<Box<str>, MsFunctionRegistry>>,
 }
 
 impl MsTraitRegistry {
-    pub fn find(&self, trait_name: &str, ty: &MsType) -> Option<&MsFunctionRegistry> {
+    pub(crate) fn find_trait_for(
+        &self,
+        trait_name: &str,
+        type_name: &str,
+    ) -> Option<&MsFunctionRegistry> {
+        let trait_registry = self.registry.get(trait_name)?;
+        let functions = trait_registry.get(type_name)?;
+
+        Some(functions)
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct MsGenericFunction {}
+impl MsGenericFunction {
+    pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved>) -> FunctionDecl {
         todo!()
     }
 }
+
+#[derive(Default, Debug)]
+pub struct MsFunctionTemplates {
+    pub registry: HashMap<Box<str>, MsGenericFunction>,
+}
+
+#[derive(Default, Debug)]
+pub struct MsTraitTemplates {}

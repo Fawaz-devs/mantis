@@ -6,7 +6,7 @@ use cranelift_module::{Linkage, Module};
 use cranelift_object::ObjectModule;
 use mantis_expression::pratt::{Block, FunctionDecl, Type};
 
-use crate::registries::types::MsTypeRegistry;
+use crate::{frontend::tokens::MsContext, registries::types::MsTypeRegistry};
 
 pub enum FinalType {
     Name(Box<str>),
@@ -26,10 +26,7 @@ pub fn resolve_typename(ty: &Type) -> Box<str> {
     }
 }
 
-pub fn type_name_into_cranelift_type(
-    ty_name: &str,
-    registry: &MsTypeRegistry,
-) -> Option<types::Type> {
+pub fn type_name_into_cranelift_type(ty_name: &str, ctx: &MsContext) -> Option<types::Type> {
     todo!()
 }
 
@@ -38,28 +35,30 @@ pub fn compile_function(
     module: &mut ObjectModule,
     ctx: &mut Context,
     fbx: &mut FunctionBuilderContext,
-    type_registry: &mut MsTypeRegistry,
+    ms_ctx: &mut MsContext,
 ) {
     let name = resolve_typename(&function.name);
 
     let mut linkage = Linkage::Preemptible;
 
     if function.is_extern {
-        linkage = Linkage::Import;
+        if matches!(function.block, Block::Empty) {
+            linkage = Linkage::Import;
+        } else {
+            linkage = Linkage::Export;
+        }
     } else {
         for (_k, v) in &function.arguments {
-            let Some(ty) = type_name_into_cranelift_type(&resolve_typename(v), &type_registry)
-            else {
+            let Some(ty) = type_name_into_cranelift_type(&resolve_typename(v), &ms_ctx) else {
                 unreachable!()
             };
 
             ctx.func.signature.params.push(AbiParam::new(ty));
         }
         {
-            if let Some(ty) = type_name_into_cranelift_type(
-                &resolve_typename(&function.return_type),
-                &type_registry,
-            ) {
+            if let Some(ty) =
+                type_name_into_cranelift_type(&resolve_typename(&function.return_type), &ms_ctx)
+            {
                 ctx.func.signature.returns.push(AbiParam::new(ty));
             } else {
             };

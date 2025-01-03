@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use cranelift::prelude::{FunctionBuilder, Value, Variable};
+use linear_map::LinearMap;
 
 use super::{types::MsType, MsRegistry, MsRegistryExt};
 
@@ -38,17 +39,5 @@ impl MsVal {
 
 #[derive(Default, Clone, Debug)]
 pub struct MsVarRegistry {
-    registry: HashMap<String, MsVar>, // variable name -> variable type name
+    pub registry: LinearMap<String, MsVar>, // variable name -> variable type name
 }
-
-impl MsRegistry<MsVar> for MsVarRegistry {
-    fn get_registry(&self) -> &HashMap<String, MsVar> {
-        &self.registry
-    }
-
-    fn get_registry_mut(&mut self) -> &mut HashMap<String, MsVar> {
-        &mut self.registry
-    }
-}
-
-impl MsRegistryExt<MsVar> for MsVarRegistry {}
