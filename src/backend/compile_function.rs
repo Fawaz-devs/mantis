@@ -313,6 +313,20 @@ pub fn compile_node(
             }
         }
         Node::Unary(rule, node) => {
+            if matches!(rule, Rule::deref) {
+                let node = compile_node(node, module, fbx, ms_ctx).unwrap();
+
+                let ptr_value = node.value(fbx);
+                let val = fbx.ins().load(
+                    node.ty().to_cl_type().unwrap(),
+                    MemFlags::new(),
+                    ptr_value,
+                    0,
+                );
+
+                return Some(NodeResult::Val(MsVal::new(val, node.ty().clone())));
+            }
+
             todo!("unary operation not implemented")
         }
         Node::Expr(node) => {

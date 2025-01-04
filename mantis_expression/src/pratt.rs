@@ -732,15 +732,26 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
                 let mut word = iter.next().unwrap();
 
                 let mut is_reference = false;
-                let mut is_mutable = false;
 
-                if matches!(word.as_rule(), Rule::at) {
-                    word = iter.next().unwrap();
-                    is_reference = true;
-                }
-                if matches!(word.as_rule(), Rule::mut_word) {
-                    word = iter.next().unwrap();
-                    is_mutable = true;
+                let mut reference_mutables = Vec::new();
+
+                loop {
+                    let mut is_mutable = false;
+                    if matches!(word.as_rule(), Rule::at) {
+                        word = iter.next().unwrap();
+                        is_reference = true;
+                    }
+                    if matches!(word.as_rule(), Rule::mut_word) {
+                        word = iter.next().unwrap();
+                        is_mutable = true;
+                    }
+
+                    if is_reference {
+                        reference_mutables.push(is_mutable);
+                    }
+                    if matches!(word.as_rule(), Rule::nested_type_name) {
+                        break;
+                    }
                 }
 
                 let word = parse_type(Pairs::single(word), pratt, src);
@@ -756,7 +767,13 @@ fn parse_type(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> T
                     word
                 };
                 if is_reference {
-                    Type::Ref(ty.into(), is_mutable)
+                    let mut final_ty = ty;
+                    for mutable in reference_mutables.into_iter().rev() {
+                        final_ty = Type::Ref(final_ty.into(), mutable);
+                    }
+
+                    // Type::Ref(ty.into(), is_mutable)
+                    final_ty
                 } else {
                     ty
                 }

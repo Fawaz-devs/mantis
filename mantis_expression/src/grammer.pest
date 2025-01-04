@@ -44,8 +44,11 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       stmt = { ( let_stmt | ret_stmt | break_stmt | continue_stmt | expr ) ~ ";" }
       stmts = { stmt+ }
       block = { "{" ~ (if_else_chain | stmts | block | loop_block | match_block )* ~ "}" }
-      type_name = { at? ~ mut_word? ~ nested_type_name ~ ("[" ~ type_list ~ "]")? }
+
+      
+      type_name = { (at ~ mut_word?)* ~ nested_type_name ~ ("[" ~ type_list ~ "]")? }
       nested_type_name = { word ~ ( "." ~ word )* }
+
       type_list = { type_name ~ ("," ~ type_name)* }
       typed_arg = { word ~ type_name }
       typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
