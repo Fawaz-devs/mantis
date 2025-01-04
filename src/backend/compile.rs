@@ -40,17 +40,6 @@ pub fn compile_binary(
                 todo!("add types to ms_context");
             }
             Declaration::Use(_use_decl) => {
-                // let mut iter = use_decl.path.iter();
-                // let entry = resolve_module_by_word(&include_dirs, &word)
-                //     .expect(&format!("unresolved module {:?}", use_decl.path));
-                // match entry {
-                //     crate::registries::modules::ModuleEntry::Module(content) => {
-
-                //     }
-                //     crate::registries::modules::ModuleEntry::Dir(path) => {
-                //         path_buf = path;
-                //     }
-                // }
                 todo!("use decl should compile the modules");
             }
             Declaration::Trait(trait_decl) => todo!("add traits to ms_context"),

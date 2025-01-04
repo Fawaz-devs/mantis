@@ -95,6 +95,7 @@ impl MsNativeType {
         Some(match self {
             MsNativeType::Void => return None,
             MsNativeType::Bool => types::I8,
+            MsNativeType::Char => types::I32,
             MsNativeType::F32 => types::F32,
             MsNativeType::F64 => types::F64,
             MsNativeType::I8 => types::I8,
@@ -180,7 +181,8 @@ impl MsNativeType {
             | MsNativeType::U32
             | MsNativeType::U64
             | MsNativeType::I64
-            | MsNativeType::I32 => true,
+            | MsNativeType::I32
+            | MsNativeType::Char => true,
             _ => false,
         }
     }
@@ -194,7 +196,11 @@ impl MsNativeType {
 
     pub fn is_sint(&self) -> bool {
         match self {
-            MsNativeType::I32 | MsNativeType::I8 | MsNativeType::I16 | MsNativeType::I64 => true,
+            MsNativeType::I32
+            | MsNativeType::I8
+            | MsNativeType::I16
+            | MsNativeType::I64
+            | MsNativeType::Char => true,
             _ => false,
         }
     }
@@ -206,7 +212,7 @@ impl MsNativeType {
         }
     }
 
-    pub(crate) fn cast_to(&self, lhs: Value, r: &MsType, fbx: &mut FunctionBuilder) -> Value {
+    pub fn cast_to(&self, lhs: Value, r: &MsType, fbx: &mut FunctionBuilder) -> Value {
         let MsType::Native(rnty) = r else {
             panic!("Non native casting not supported yet");
         };
@@ -246,16 +252,6 @@ impl MsNativeType {
         }
 
         lhs
-    }
-
-    pub(crate) fn store(
-        &self,
-        ptr: Value,
-        offset: i32,
-        rhs: Value,
-        fbx: &mut FunctionBuilder,
-    ) -> Inst {
-        fbx.ins().store(MemFlags::new(), rhs, ptr, offset)
     }
 
     fn to_string(&self) -> &'static str {
@@ -399,6 +395,19 @@ impl Hash for MsType {
 }
 
 impl MsType {
+    pub fn native(&self) -> Option<MsNativeType> {
+        match self {
+            MsType::Native(ms_native_type) => Some(*ms_native_type),
+            _ => None,
+        }
+    }
+    pub fn struct_ty(&self) -> Option<Rc<MsStructType>> {
+        match self {
+            MsType::Struct(ms_struct) => Some(ms_struct.clone()),
+            _ => None,
+        }
+    }
+
     pub fn equal(&self, ty: &MsType) -> bool {
         match (self, ty) {
             (MsType::Native(t0), MsType::Native(t1)) => t0 == t1,

@@ -19,9 +19,10 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       assign =   { "=" }
       cast   =   { "as" }
       modulus = { "%" }
-    prefix   =  _{ neg | at }
+    prefix   =  _{ neg | at | deref }
       neg    =   { "-" } 
       at     =   { "@" } 
+      deref  =   { "*" }
     postfix  =  _{ expr_call | propogate  }
       expr_call =  { ( "(" ~ expr_list? ~ ")" ) }
       propogate = { "?" }

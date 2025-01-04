@@ -222,7 +222,8 @@ fn translate_binary_op(
                     .expect("Undeclared function");
 
                 log::info!("Calling {} with signature {:?}", fn_name, signature);
-                return NodeResult::Val(MsVal::new(value, signature.rets.clone()));
+                // return NodeResult::Val(MsVal::new(value, signature.rets.clone()));
+                todo!()
             }
         }
         BinaryOperation::Access => {
@@ -308,6 +309,12 @@ impl NodeResult {
             NodeResult::Var(var) => &var.ty,
             NodeResult::StructAccessVar { ptr, offset } => &ptr.ty,
         }
+    }
+
+    pub fn to_ms_val(&self, fbx: &mut FunctionBuilder) -> MsVal {
+        let ty = self.ty().clone();
+        let val = self.value(fbx);
+        MsVal::new(val, ty)
     }
 }
 

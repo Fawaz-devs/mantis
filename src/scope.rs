@@ -19,7 +19,9 @@ impl MsVarScopes {
         index
     }
 
-    pub fn exit_scope_until(&mut self, index: usize) {}
+    pub fn exit_scope_until(&mut self, index: usize) {
+        todo!()
+    }
 
     pub fn exit_scope(&mut self) -> Option<MsVarRegistry> {
         self.scopes.pop()
@@ -34,12 +36,23 @@ impl MsVarScopes {
         return None;
     }
 
-    pub fn add_variable(&mut self, var_name: impl Into<String>, var: MsVar) -> Option<MsVar> {
-        self.scopes
-            .last_mut()
-            .unwrap()
-            .registry
-            .insert(var_name.into(), var)
+    pub fn add_variable(&mut self, var_name: impl Into<Box<str>>, var: MsVar) -> Option<MsVar> {
+        let last_scope = self.scopes.last_mut().unwrap();
+        let var_name: Box<str> = var_name.into();
+        if let Some(old_variable) = last_scope.registry.insert(var_name.clone(), var) {
+            let (idx, _) = last_scope
+                .stack
+                .iter()
+                .enumerate()
+                .find(|(_, x)| **x == var_name)
+                .unwrap();
+            last_scope.stack.remove(idx);
+            last_scope.stack.push(var_name);
+            return Some(old_variable);
+        }
+
+        last_scope.stack.push(var_name);
+        None
     }
 }
 
@@ -49,14 +62,15 @@ pub fn drop_scope(
     fbx: &mut FunctionBuilder,
     module: &mut ObjectModule,
 ) {
-    for (k, v) in reg.registry.into_iter().rev() {
-        drop_variable(v, ctx, fbx, module);
-        log::info!("Dropped {}", k);
+    for var_name in reg.stack.into_iter().rev() {
+        let var = reg.registry.get(&var_name).unwrap();
+        drop_variable(var, ctx, fbx, module);
+        log::info!("Dropped {}", var_name);
     }
 }
 
 pub fn drop_variable(
-    var: MsVar,
+    var: &MsVar,
     ctx: &MsContext,
     fbx: &mut FunctionBuilder,
     module: &mut ObjectModule,

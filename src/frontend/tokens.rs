@@ -446,7 +446,7 @@ impl MsExpression {
                     .unwrap()
                     .variables
                     .registry
-                    .insert(var_name.clone(), MsVar::new(ty.clone(), var));
+                    .insert(var_name.as_str().into(), MsVar::new(ty.clone(), var));
             }
             MsExpression::Operation(node) => {
                 let _ = translate_node(&node, ms_ctx, fbx, module);
@@ -1009,7 +1009,7 @@ impl MsFunctionDeclaration {
                 .unwrap()
                 .variables
                 .registry
-                .insert(variable.name.clone(), ms_var);
+                .insert(variable.name.as_str().into(), ms_var);
 
             builder.declare_var(var, ty);
             builder.def_var(var, value);

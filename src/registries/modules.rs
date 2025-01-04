@@ -28,7 +28,6 @@ pub struct MsModule {
     pub trait_templates: MsTraitTemplates,
     pub type_registry: MsTypeRegistry,
     pub type_templates: MsTypeTemplates,
-
     pub submodules: HashMap<Box<str>, MsModule>,
 }
 
@@ -47,7 +46,7 @@ impl MsModule {
                     if let Some(ty) = self.type_registry.registry.get(&generic_key) {
                         return Some(MsResolved::Type(ty.clone()));
                     }
-                    if let Some(func) = self.fn_registry.registry.get(&generic_key) {
+                    if let Some(func) = self.fn_registry.registry.get(generic_key.as_str()) {
                         return Some(MsResolved::Function(func.clone()));
                     }
                 }

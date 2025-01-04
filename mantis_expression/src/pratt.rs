@@ -246,6 +246,7 @@ fn get_pratt_parser() -> PrattParser<Rule> {
         .op(Op::postfix(Rule::expr_call))
         .op(Op::postfix(Rule::propogate))
         .op(Op::prefix(Rule::neg))
+        .op(Op::prefix(Rule::deref))
         .op(Op::infix(Rule::cast, Assoc::Right))
         .op(Op::prefix(Rule::at))
         .op(Op::infix(Rule::dot, Assoc::Left))
@@ -308,7 +309,7 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> N
             ),
         })
         .map_prefix(|op, rhs| match op.as_rule() {
-            Rule::at | Rule::neg => Node::Unary(op.as_rule(), rhs.into()),
+            Rule::at | Rule::neg | Rule::deref => Node::Unary(op.as_rule(), rhs.into()),
             _ => unreachable!(),
         })
         .map_infix(|lhs, op, rhs| match op.as_rule() {
