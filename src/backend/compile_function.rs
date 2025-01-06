@@ -134,9 +134,10 @@ pub fn compile_function(
 
         f.declare_var(var, ty.to_cl_type().unwrap());
         f.def_var(var, *value);
-        ms_ctx
-            .var_scopes
-            .add_variable(arg_name.deref(), MsVar::new(ty, var));
+        ms_ctx.var_scopes.add_variable(
+            arg_name.deref(),
+            MsVar::new(ty.clone(), var, ty.to_string()),
+        );
     }
 
     {
@@ -266,6 +267,7 @@ pub fn compile_cast(
             return NodeResult::Val(MsVal::new(
                 nty.cast_to(value.value(fbx), &cast_to, fbx),
                 cast_to.clone(),
+                cast_to.to_string(),
             ))
         }
         _ => unimplemented!("only native types are castable"),
@@ -318,7 +320,8 @@ pub fn compile_node(
                 let rval = rhs.value(fbx);
                 let value = compile_binary_operation(op, lval, rval, nty, module, fbx, ms_ctx);
 
-                let value = NodeResult::Val(MsVal::new(value, MsType::Native(nty)));
+                let value =
+                    NodeResult::Val(MsVal::new(value, MsType::Native(nty), nty.to_string()));
 
                 return Some(value);
             }
@@ -335,7 +338,11 @@ pub fn compile_node(
                     0,
                 );
 
-                return Some(NodeResult::Val(MsVal::new(val, node.ty().clone())));
+                return Some(NodeResult::Val(MsVal::new(
+                    val,
+                    node.ty().clone(),
+                    node.ty().to_string(),
+                )));
             }
 
             todo!("unary operation not implemented")
@@ -376,7 +383,7 @@ pub fn compile_node(
                     .expect(&format!("undefined type {ty_name}"))
                     .clone();
 
-                return Some(NodeResult::Val(MsVal::new(return_value, ty)));
+                return Some(NodeResult::Val(MsVal::new(return_value, ty, ty_name)));
             }
         }
         Node::Term(term) => match term {
@@ -423,25 +430,57 @@ pub fn compile_node(
                 let gl_value = module.declare_data_in_func(data_id, fbx.func);
                 let ty = types::I64;
                 let ptr = fbx.ins().global_value(ty, gl_value);
-                let ty = ms_ctx
+                let MsType::Struct(ty) = ms_ctx
                     .current_module
                     .type_registry
-                    .registry
-                    .get("str")
+                    .get("StrSlice")
                     .unwrap()
-                    .clone();
+                    .clone()
+                else {
+                    panic!("expected struct");
+                };
                 // str len: 8 + ptr: 8
                 let stack_slot = fbx.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     ty.size() as u32,
                 ));
-
                 let size_of_data = fbx.ins().iconst(types::I64, content.len() as i64);
-                fbx.ins().stack_store(size_of_data, stack_slot, 0);
-                fbx.ins().stack_store(ptr, stack_slot, 8);
-                let val = fbx.ins().stack_addr(types::I64, stack_slot, 0);
-                let ty = MsType::Ref(ty.into(), false);
-                return Some(NodeResult::Val(MsVal::new(val, ty)));
+
+                let ty_i64 = MsType::Native(MsNativeType::I64);
+
+                let struct_ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
+                ty.set_field(
+                    &MsVal::new(struct_ptr, ty_i64.clone(), "i64"),
+                    "len",
+                    &MsVal::new(size_of_data, ty_i64.clone(), "i64"),
+                    ms_ctx,
+                    fbx,
+                    module,
+                );
+                ty.set_field(
+                    &MsVal::new(struct_ptr, ty_i64.clone(), "i64"),
+                    "pointer",
+                    &MsVal::new(ptr, ty_i64.clone(), "i64"),
+                    ms_ctx,
+                    fbx,
+                    module,
+                );
+
+                let mut val = MsVal::new(
+                    struct_ptr,
+                    MsType::Ref(MsType::Struct(ty).into(), false),
+                    "StrSlice",
+                );
+
+                return Some(NodeResult::Val(val));
+
+                // fbx.ins().stack_store(size_of_data, stack_slot, 0);
+                // fbx.ins().stack_store(ptr, stack_slot, 8);
+                // let val = fbx.ins().stack_addr(types::I64, stack_slot, 0);
+
+                // let ty = MsType::Ref(ty.into(), false);
+                // return Some(NodeResult::Val(MsVal::new(val, ty)));
+                todo!();
             }
             Term::Type(type_name) => {
                 let var_name = resolve_typename(type_name);
@@ -455,20 +494,20 @@ pub fn compile_node(
                 let ty = MsType::Native(MsNativeType::I64);
                 let cty = ty.to_cl_type().unwrap();
                 let val = fbx.ins().iconst(cty, *val);
-                return Some(NodeResult::Val(MsVal::new(val, ty)));
+                return Some(NodeResult::Val(MsVal::new(val, ty, "i64")));
             }
             Term::F64(val) => {
                 let ty = MsType::Native(MsNativeType::F64);
                 let cty = ty.to_cl_type().unwrap();
                 let val = fbx.ins().f64const(*val);
-                return Some(NodeResult::Val(MsVal::new(val, ty)));
+                return Some(NodeResult::Val(MsVal::new(val, ty, "f64")));
             }
             Term::Char(c) => {
                 let c = *c as i32; // utf8
                 let ty = MsType::Native(MsNativeType::Char);
                 let cty = ty.to_cl_type().unwrap();
                 let val = fbx.ins().iconst(cty, c as i64);
-                return Some(NodeResult::Val(MsVal::new(val, ty)));
+                return Some(NodeResult::Val(MsVal::new(val, ty, "char")));
             }
             Term::Struct(ty, linear_map) => {
                 let ty_name = resolve_typename(ty);
@@ -488,7 +527,7 @@ pub fn compile_node(
                 ));
                 let ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
 
-                let ptr = MsVal::new(ptr, MsType::Struct(struct_type.clone()));
+                let ptr = MsVal::new(ptr, MsType::Struct(struct_type.clone()), ty_name);
                 for (k, v) in linear_map {
                     let val = compile_node(v, module, fbx, ms_ctx).unwrap().to_ms_val(fbx);
                     struct_type.set_field(&ptr, k, &val, ms_ctx, fbx, module);
@@ -541,12 +580,13 @@ pub fn compile_statements(
                     value = implicit_cast(value, ty, module, fbx, ms_ctx);
                 }
 
-                let ty = value.ty().clone();
-                let value = value.value(fbx);
+                let node_value = value;
+                let ty = node_value.ty().clone();
+                let value = node_value.value(fbx);
                 let variable = ms_ctx.new_variable();
                 fbx.declare_var(variable, ty.to_cl_type().unwrap());
                 fbx.def_var(variable, value);
-                let mut variable = MsVar::new(ty, variable);
+                let mut variable = MsVar::new(ty.clone(), variable, node_value.type_name());
                 variable.mark_mutability(*is_mutable);
                 if let Some(old_variable) = ms_ctx.var_scopes.add_variable(var_name, variable) {
                     drop_variable(&old_variable, ms_ctx, fbx, module);

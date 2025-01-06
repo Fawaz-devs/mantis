@@ -7,11 +7,11 @@ use std::{
 use codegen::ir::{condcodes, Inst};
 use cranelift::prelude::*;
 use linear_map::LinearMap;
-use mantis_expression::node::BinaryOperation;
+use mantis_expression::{node::BinaryOperation, pratt};
 
 use crate::native::instructions::Either;
 
-use super::{structs::MsStructType, MsRegistry, MsRegistryExt};
+use super::{modules::MsModule, structs::MsStructType, MsRegistry, MsRegistryExt};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsNativeType {
@@ -251,7 +251,7 @@ impl MsNativeType {
         lhs
     }
 
-    fn to_string(&self) -> &'static str {
+    pub fn to_string(&self) -> &'static str {
         match self {
             MsNativeType::Bool => "bool",
             MsNativeType::Void => "void",
@@ -315,24 +315,63 @@ pub struct TypeNameWithGenerics {
     pub name: Box<str>,
     pub generics: Vec<TypeNameWithGenerics>,
 }
+impl TypeNameWithGenerics {
+    pub fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+        if let Some(ty) = real_types.get(&self.name) {
+            assert!(self.generics.is_empty());
+            return ty.clone();
+        }
+
+        if let Some(ty) = ms_module.type_registry.get(&self.name) {
+            assert!(self.generics.is_empty());
+            return ty.clone();
+        }
+
+        let template = ms_module
+            .type_templates
+            .registry
+            .get(&self.name)
+            .expect(&format!("undeclared template {}", self.name))
+            .clone();
+        return template.generate(real_types, ms_module);
+    }
+
+    pub fn from_type(ty: &pratt::Type) -> Self {
+        match ty {
+            pratt::Type::WithGenerics(ty_name, generics) => Self {
+                name: ty_name.to_string().into(),
+                generics: generics.iter().map(Self::from_type).collect(),
+            },
+            pratt::Type::Word(word_span) => Self {
+                name: word_span.as_str().into(),
+                generics: Vec::new(),
+            },
+            _ => todo!(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct StructWithGenerics {
-    map: LinearMap<Box<str>, TypeNameWithGenerics>,
+    pub map: LinearMap<Box<str>, TypeNameWithGenerics>,
 }
+impl StructWithGenerics {
+    fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+        let mut struct_ty = MsStructType::default();
 
-#[derive(Clone, Debug)]
-pub struct MsGenericType {
-    pub generics: Vec<String>,
-    // pub generic_map: HashMap<String, String>, // field ->  type_name
-    pub inner_type: Either<TypeNameWithGenerics, StructWithGenerics>,
+        for (field_name, field_ty) in &self.map {
+            let ty = field_ty.generate(&real_types, ms_module);
+            struct_ty.add_field(field_name.clone(), ty);
+        }
+
+        MsType::Struct(Rc::new(struct_ty))
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct MsGenericTemplate {
     pub generics: Vec<String>,
     pub inner_type: Either<TypeNameWithGenerics, StructWithGenerics>,
-    // generic_map: LinearMap<String, Either<MsType, String>>, // field ->  type_name
 }
 
 impl MsGenericTemplate {
@@ -372,8 +411,11 @@ impl MsGenericTemplate {
     //     st
     // }
 
-    pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved>) -> MsType {
-        todo!()
+    pub fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+        match &self.inner_type {
+            Either::Left(ty) => ty.generate(&real_types, ms_module),
+            Either::Right(struct_ty) => struct_ty.generate(&real_types, ms_module),
+        }
     }
 }
 
@@ -458,6 +500,7 @@ impl MsType {
     pub fn to_cl_type(&self) -> Option<Type> {
         match self {
             MsType::Native(ty) => ty.to_cl_type(),
+            MsType::Ref(ty, _) => Some(types::I64),
             _ => todo!(),
         }
     }
@@ -465,6 +508,10 @@ impl MsType {
     pub fn to_string(&self) -> String {
         match self {
             MsType::Native(ty) => ty.to_string().into(),
+            // MsType::Ref(ty, is_mutable) => ty.to_string(),
+            // MsType::Struct(ty) => {
+            //     todo!("{:?}", ty)
+            // }
             _ => todo!(),
         }
     }
@@ -495,7 +542,7 @@ impl Default for MsTypeRegistry {
         registry.insert("i32".into(), MsType::Native(MsNativeType::I32));
         registry.insert("i64".into(), MsType::Native(MsNativeType::I64));
         registry.insert("u8".into(), MsType::Native(MsNativeType::U8));
-        registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
+        // registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
         registry.insert("u32".into(), MsType::Native(MsNativeType::U32));
         registry.insert("u64".into(), MsType::Native(MsNativeType::U64));
         registry.insert("f32".into(), MsType::Native(MsNativeType::F32));
@@ -503,7 +550,7 @@ impl Default for MsTypeRegistry {
         registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
         // registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
 
-        let pointer_ty = pointer_template();
+        // let pointer_ty = pointer_template();
 
         {
             // let mut generics = BTreeMap::new();

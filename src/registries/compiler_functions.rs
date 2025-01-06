@@ -87,7 +87,7 @@ fn ms_init_struct(ty: MsType, fbx: &mut FunctionBuilder) -> NodeResult {
     ));
 
     let ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
-    NodeResult::Val(MsVal::new(ptr, ty))
+    NodeResult::Val(MsVal::new(ptr, ty, "i64"))
 }
 
 fn ms_size_of(ty: MsType, fbx: &mut FunctionBuilder) -> NodeResult {
@@ -96,5 +96,6 @@ fn ms_size_of(ty: MsType, fbx: &mut FunctionBuilder) -> NodeResult {
     NodeResult::Val(MsVal::new(
         value,
         MsType::Native(super::types::MsNativeType::I64),
+        "i64",
     ))
 }

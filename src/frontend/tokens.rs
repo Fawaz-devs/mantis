@@ -13,7 +13,6 @@ use logos::Logos;
 
 use crate::{
     libc::libc::declare_external_function,
-    native::instructions::translate_node,
     registries::{
         functions::{
             FunctionType, MsFunctionRegistry, MsFunctionTemplates, MsFunctionType, MsTraitRegistry,
@@ -436,191 +435,192 @@ impl MsExpression {
         fbx: &mut FunctionBuilder<'_>,
         module: &mut ObjectModule,
     ) -> Option<()> {
-        match self {
-            MsExpression::Declare(var_name, ty) => {
-                let var = ms_ctx.new_variable();
-                fbx.declare_var(var, ty.to_cl_type().expect("Type can't be null"));
-                ms_ctx
-                    .scopes
-                    .last_scope_mut()
-                    .unwrap()
-                    .variables
-                    .registry
-                    .insert(var_name.as_str().into(), MsVar::new(ty.clone(), var));
-            }
-            MsExpression::Operation(node) => {
-                let _ = translate_node(&node, ms_ctx, fbx, module);
-            }
-            MsExpression::Return(ret) => {
-                if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
-                    let mut value = translate_node(&ret, ms_ctx, fbx, module).value(fbx);
-                    fbx.ins().return_(&[value]);
-                } else {
-                    panic!("Function doesn't support return type");
-                }
-            }
-            MsExpression::Scope(sc_ty, expressions) => match sc_ty {
-                MsScopeType::If(node) => {
-                    let iftrue_block = fbx.create_block();
-                    let else_block = fbx.create_block();
-                    let merge_block = fbx.create_block();
-                    let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
+        // match self {
+        //     MsExpression::Declare(var_name, ty) => {
+        //         let var = ms_ctx.new_variable();
+        //         fbx.declare_var(var, ty.to_cl_type().expect("Type can't be null"));
+        //         ms_ctx
+        //             .scopes
+        //             .last_scope_mut()
+        //             .unwrap()
+        //             .variables
+        //             .registry
+        //             .insert(var_name.as_str().into(), MsVar::new(ty.clone(), var));
+        //     }
+        //     MsExpression::Operation(node) => {
+        //         let _ = translate_node(&node, ms_ctx, fbx, module);
+        //     }
+        //     MsExpression::Return(ret) => {
+        //         if let Some(return_type) = fbx.func.signature.returns.first().cloned() {
+        //             let mut value = translate_node(&ret, ms_ctx, fbx, module).value(fbx);
+        //             fbx.ins().return_(&[value]);
+        //         } else {
+        //             panic!("Function doesn't support return type");
+        //         }
+        //     }
+        //     MsExpression::Scope(sc_ty, expressions) => match sc_ty {
+        //         MsScopeType::If(node) => {
+        //             let iftrue_block = fbx.create_block();
+        //             let else_block = fbx.create_block();
+        //             let merge_block = fbx.create_block();
+        //             let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
 
-                    ms_ctx.scopes.new_scope(merge_block, MsClScopeType::ExitIf);
-                    ms_ctx.scopes.new_scope(else_block, MsClScopeType::Else);
-                    ms_ctx.scopes.new_scope(iftrue_block, MsClScopeType::If);
+        //             ms_ctx.scopes.new_scope(merge_block, MsClScopeType::ExitIf);
+        //             ms_ctx.scopes.new_scope(else_block, MsClScopeType::Else);
+        //             ms_ctx.scopes.new_scope(iftrue_block, MsClScopeType::If);
 
-                    fbx.ins().brif(val, iftrue_block, &[], else_block, &[]);
-                    fbx.switch_to_block(iftrue_block);
-                    fbx.seal_block(iftrue_block);
+        //             fbx.ins().brif(val, iftrue_block, &[], else_block, &[]);
+        //             fbx.switch_to_block(iftrue_block);
+        //             fbx.seal_block(iftrue_block);
 
-                    let mut jumped_already = false;
-                    for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module).unwrap();
-                        match expr {
-                            MsExpression::Break
-                            | MsExpression::Continue
-                            | MsExpression::Return(_) => {
-                                jumped_already = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    ms_ctx.scopes.exit_scope().unwrap();
+        //             let mut jumped_already = false;
+        //             for expr in expressions {
+        //                 expr.translate(ms_ctx, fbx, module).unwrap();
+        //                 match expr {
+        //                     MsExpression::Break
+        //                     | MsExpression::Continue
+        //                     | MsExpression::Return(_) => {
+        //                         jumped_already = true;
+        //                     }
+        //                     _ => {}
+        //                 }
+        //             }
+        //             ms_ctx.scopes.exit_scope().unwrap();
 
-                    if !jumped_already {
-                        fbx.ins().jump(merge_block, &[]);
-                    }
-                }
+        //             if !jumped_already {
+        //                 fbx.ins().jump(merge_block, &[]);
+        //             }
+        //         }
 
-                MsScopeType::ElseIf(node) => {
-                    let mut jumped_already = false;
+        //         MsScopeType::ElseIf(node) => {
+        //             let mut jumped_already = false;
 
-                    let else_scope = ms_ctx.scopes.exit_scope().unwrap();
-                    assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
-                    let merge_scope = ms_ctx.scopes.last_scope().unwrap();
-                    assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
+        //             let else_scope = ms_ctx.scopes.exit_scope().unwrap();
+        //             assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
+        //             let merge_scope = ms_ctx.scopes.last_scope().unwrap();
+        //             assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
 
-                    let merge_block = merge_scope.block;
+        //             let merge_block = merge_scope.block;
 
-                    let elseif_block = fbx.create_block();
-                    let nextelseif_block = fbx.create_block();
+        //             let elseif_block = fbx.create_block();
+        //             let nextelseif_block = fbx.create_block();
 
-                    ms_ctx
-                        .scopes
-                        .new_scope(nextelseif_block, MsClScopeType::Else);
+        //             ms_ctx
+        //                 .scopes
+        //                 .new_scope(nextelseif_block, MsClScopeType::Else);
 
-                    ms_ctx.scopes.new_scope(elseif_block, MsClScopeType::Else); // Maybe make this empty scope
+        //             ms_ctx.scopes.new_scope(elseif_block, MsClScopeType::Else); // Maybe make this empty scope
 
-                    fbx.switch_to_block(else_scope.block);
-                    fbx.seal_block(else_scope.block);
+        //             fbx.switch_to_block(else_scope.block);
+        //             fbx.seal_block(else_scope.block);
 
-                    let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
+        //             let val = translate_node(node, ms_ctx, fbx, module).value(fbx);
 
-                    fbx.ins()
-                        .brif(val, elseif_block, &[], nextelseif_block, &[]);
+        //             fbx.ins()
+        //                 .brif(val, elseif_block, &[], nextelseif_block, &[]);
 
-                    fbx.switch_to_block(elseif_block);
-                    fbx.seal_block(elseif_block);
-                    for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module).unwrap();
+        //             fbx.switch_to_block(elseif_block);
+        //             fbx.seal_block(elseif_block);
+        //             for expr in expressions {
+        //                 expr.translate(ms_ctx, fbx, module).unwrap();
 
-                        match &expr {
-                            MsExpression::Break
-                            | MsExpression::Continue
-                            | MsExpression::Return(_) => {
-                                jumped_already = true;
-                            }
-                            _ => {}
-                        }
-                    }
+        //                 match &expr {
+        //                     MsExpression::Break
+        //                     | MsExpression::Continue
+        //                     | MsExpression::Return(_) => {
+        //                         jumped_already = true;
+        //                     }
+        //                     _ => {}
+        //                 }
+        //             }
 
-                    ms_ctx.scopes.exit_scope().unwrap();
+        //             ms_ctx.scopes.exit_scope().unwrap();
 
-                    if !jumped_already {
-                        fbx.ins().jump(merge_block, &[]);
-                    }
-                }
-                MsScopeType::Else => {
-                    let mut jumped_already = false;
+        //             if !jumped_already {
+        //                 fbx.ins().jump(merge_block, &[]);
+        //             }
+        //         }
+        //         MsScopeType::Else => {
+        //             let mut jumped_already = false;
 
-                    let else_scope = ms_ctx.scopes.exit_scope().unwrap();
-                    assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
+        //             let else_scope = ms_ctx.scopes.exit_scope().unwrap();
+        //             assert!(matches!(else_scope.scope_type, MsClScopeType::Else));
 
-                    fbx.switch_to_block(else_scope.block);
-                    fbx.seal_block(else_scope.block);
+        //             fbx.switch_to_block(else_scope.block);
+        //             fbx.seal_block(else_scope.block);
 
-                    for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module).unwrap();
+        //             for expr in expressions {
+        //                 expr.translate(ms_ctx, fbx, module).unwrap();
 
-                        match expr {
-                            MsExpression::Break
-                            | MsExpression::Continue
-                            | MsExpression::Return(_) => {
-                                jumped_already = true;
-                            }
-                            _ => {}
-                        }
-                    }
+        //                 match expr {
+        //                     MsExpression::Break
+        //                     | MsExpression::Continue
+        //                     | MsExpression::Return(_) => {
+        //                         jumped_already = true;
+        //                     }
+        //                     _ => {}
+        //                 }
+        //             }
 
-                    let merge_scope = ms_ctx.scopes.exit_scope().unwrap();
-                    assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
-                    if !jumped_already {
-                        fbx.ins().jump(merge_scope.block, &[]);
-                    }
+        //             let merge_scope = ms_ctx.scopes.exit_scope().unwrap();
+        //             assert!(matches!(merge_scope.scope_type, MsClScopeType::ExitIf));
+        //             if !jumped_already {
+        //                 fbx.ins().jump(merge_scope.block, &[]);
+        //             }
 
-                    fbx.switch_to_block(merge_scope.block);
-                    fbx.seal_block(merge_scope.block);
-                }
-                MsScopeType::Loop => {
-                    let loop_block = fbx.create_block();
-                    let exit_block = fbx.create_block();
+        //             fbx.switch_to_block(merge_scope.block);
+        //             fbx.seal_block(merge_scope.block);
+        //         }
+        //         MsScopeType::Loop => {
+        //             let loop_block = fbx.create_block();
+        //             let exit_block = fbx.create_block();
 
-                    ms_ctx.scopes.new_scope(exit_block, MsClScopeType::ExitLoop);
-                    ms_ctx.scopes.new_scope(loop_block, MsClScopeType::Loop);
+        //             ms_ctx.scopes.new_scope(exit_block, MsClScopeType::ExitLoop);
+        //             ms_ctx.scopes.new_scope(loop_block, MsClScopeType::Loop);
 
-                    fbx.ins().jump(loop_block, &[]);
-                    fbx.switch_to_block(loop_block);
-                    for expr in expressions {
-                        expr.translate(ms_ctx, fbx, module);
-                    }
+        //             fbx.ins().jump(loop_block, &[]);
+        //             fbx.switch_to_block(loop_block);
+        //             for expr in expressions {
+        //                 expr.translate(ms_ctx, fbx, module);
+        //             }
 
-                    fbx.seal_block(loop_block);
-                    fbx.ins().jump(exit_block, &[]);
-                    fbx.switch_to_block(exit_block);
-                    fbx.seal_block(exit_block);
-                    let scope = ms_ctx.scopes.exit_scope().unwrap(); // loop block
-                    assert!(matches!(scope.scope_type, MsClScopeType::Loop));
-                    let scope = ms_ctx.scopes.exit_scope().unwrap(); // exit block
-                    assert!(matches!(scope.scope_type, MsClScopeType::ExitLoop));
-                }
+        //             fbx.seal_block(loop_block);
+        //             fbx.ins().jump(exit_block, &[]);
+        //             fbx.switch_to_block(exit_block);
+        //             fbx.seal_block(exit_block);
+        //             let scope = ms_ctx.scopes.exit_scope().unwrap(); // loop block
+        //             assert!(matches!(scope.scope_type, MsClScopeType::Loop));
+        //             let scope = ms_ctx.scopes.exit_scope().unwrap(); // exit block
+        //             assert!(matches!(scope.scope_type, MsClScopeType::ExitLoop));
+        //         }
 
-                MsScopeType::Empty => todo!(),
-            },
+        //         MsScopeType::Empty => todo!(),
+        //     },
 
-            MsExpression::Break => {
-                let scope = ms_ctx
-                    .scopes
-                    .find_last_scope_of_type(MsClScopeType::ExitLoop)
-                    .expect("Not inside a loop to break");
-                log::info!("Breaking, jumping to {:?}", scope);
-                fbx.ins().jump(scope.block, &[]);
-            }
-            MsExpression::Continue => {
-                let scope = ms_ctx
-                    .scopes
-                    .find_last_scope_of_type(MsClScopeType::Loop)
-                    .expect("Not inside a loop for continue");
-                log::info!(
-                    "Continue, jumping to {:?}, from {:?}",
-                    scope,
-                    fbx.current_block()
-                );
-                fbx.ins().jump(scope.block, &[]);
-            }
-        };
+        //     MsExpression::Break => {
+        //         let scope = ms_ctx
+        //             .scopes
+        //             .find_last_scope_of_type(MsClScopeType::ExitLoop)
+        //             .expect("Not inside a loop to break");
+        //         log::info!("Breaking, jumping to {:?}", scope);
+        //         fbx.ins().jump(scope.block, &[]);
+        //     }
+        //     MsExpression::Continue => {
+        //         let scope = ms_ctx
+        //             .scopes
+        //             .find_last_scope_of_type(MsClScopeType::Loop)
+        //             .expect("Not inside a loop for continue");
+        //         log::info!(
+        //             "Continue, jumping to {:?}, from {:?}",
+        //             scope,
+        //             fbx.current_block()
+        //         );
+        //         fbx.ins().jump(scope.block, &[]);
+        //     }
+        // };
 
-        Some(())
+        todo!()
+        // Some(())
     }
 }
 
@@ -1002,7 +1002,11 @@ impl MsFunctionDeclaration {
         for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
             let var = ms_ctx.new_variable();
             let ty = variable.var_type.to_cl_type().expect("type can't be void");
-            let ms_var = MsVar::new(variable.var_type.clone(), var);
+            let ms_var = MsVar::new(
+                variable.var_type.clone(),
+                var,
+                variable.var_type.to_string(),
+            );
             ms_ctx
                 .scopes
                 .last_scope_mut()

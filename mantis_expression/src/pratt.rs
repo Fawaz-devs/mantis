@@ -190,11 +190,19 @@ impl Type {
                         s.push_str(&gen.to_string());
                         s.push(',');
                     }
+                    s.pop();
                     s.push_str("]");
                 }
                 s
             }
             _ => todo!(),
+        }
+    }
+
+    pub fn word(&self) -> Option<&str> {
+        match self {
+            Type::Word(word_span) => Some(word_span.as_str()),
+            _ => unreachable!(),
         }
     }
 }

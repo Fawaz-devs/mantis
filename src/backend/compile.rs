@@ -12,7 +12,7 @@ use crate::{
     frontend::tokens::MsContext,
     registries::{
         modules::{resolve_module_by_word, MsResolved},
-        types::{MsGenericTemplate, MsGenericType, MsTypeRegistry},
+        types::{MsGenericTemplate, MsTypeRegistry},
     },
 };
 
@@ -51,54 +51,39 @@ pub fn compile_binary(
                 compile_function(function_decl, &mut module, &mut ctx, &mut fbx, &mut ms_ctx);
             }
             Declaration::Type(name, ty) => {
-                if let Some(MsResolved::Type(resolved)) = ms_ctx.current_module.resolve(&ty) {
-                    let alias = name.to_string();
-                    log::info!("type aliased {} -> {:?}", alias, resolved);
-                    ms_ctx
-                        .current_module
-                        .type_registry
-                        .registry
-                        .insert(alias, resolved);
-                } else {
-                    log::warn!("found an undefined type, creating type");
-                }
-
                 match name {
-                    Type::WithGenerics(name, generics) => {
-                        let Some(MsResolved::Type(to_ty)) = ms_ctx.current_module.resolve(&ty)
-                        else {
-                            panic!("function types not implmementd yet")
-                        };
-
-                        let template = MsGenericTemplate {
-                            generics: generics.into_iter().map(|x| x.to_string()).collect(),
-                            inner_type: todo!(),
-                        };
+                    Type::WithGenerics(word_span, generics) => {
+                        let generics = generics
+                            .iter()
+                            .map(|x| x.word().unwrap().to_string())
+                            .collect::<Vec<_>>();
+                        let template =
+                            Rc::new(ms_ctx.current_module.resolve_with_generics(&ty, &generics));
+                        let key = word_span.word().unwrap();
+                        log::info!("template generated aliased {} -> {:?}", key, template);
                         ms_ctx
                             .current_module
                             .type_templates
                             .registry
-                            .insert(name.to_string().into(), Rc::new(template));
+                            .insert(key.into(), template.clone());
                     }
                     Type::Word(word_span) => {
-                        let MsResolved::Type(to_ty) =
-                            ms_ctx.current_module.resolve(&ty).expect("undefined type")
-                        else {
-                            panic!("function types not implemented yet");
-                        };
-
-                        let alias = word_span.as_str();
-                        log::info!("type aliased {} -> {:?}", alias, to_ty);
-                        ms_ctx
-                            .current_module
-                            .type_registry
-                            .registry
-                            .insert(alias.into(), to_ty);
+                        if let Some(MsResolved::Type(resolved)) = ms_ctx.current_module.resolve(&ty)
+                        {
+                            let alias = word_span.as_str();
+                            log::info!("type aliased {} -> {:?}", alias, resolved);
+                            ms_ctx
+                                .current_module
+                                .type_registry
+                                .registry
+                                .insert(alias.into(), resolved);
+                        } else {
+                            log::warn!("found an undefined type, creating type");
+                            todo!("add types to ms_context");
+                        }
                     }
-                    _ => unreachable!(),
-                }
-
-                todo!("add types to ms_context");
+                    _ => todo!(),
+                };
             }
             Declaration::Use(_use_decl) => {
                 todo!("use decl should compile the modules");

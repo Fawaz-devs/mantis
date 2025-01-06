@@ -70,7 +70,7 @@ pub fn drop_scope(
     for var_name in reg.stack.into_iter().rev() {
         let var = reg.registry.get(&var_name).unwrap();
         drop_variable(var, ctx, fbx, module);
-        log::info!("Dropped {}", var_name);
+        log::info!("Dropped {} of type: {}", var_name, var.type_name());
     }
 }
 
@@ -81,7 +81,7 @@ pub fn drop_variable(
     module: &mut ObjectModule,
 ) {
     let v = var;
-    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", &v.ty.to_string()) {
+    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", v.type_name()) {
         let function = drop_trait
             .registry
             .get("drop")

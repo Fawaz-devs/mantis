@@ -11,7 +11,7 @@ use linear_map::LinearMap;
 use crate::{frontend::tokens::MsContext, native::instructions::Either};
 
 use super::{
-    types::{MsGenericTemplate, MsGenericType, MsType},
+    types::{MsGenericTemplate, MsType},
     variable::MsVal,
     MsRegistry,
 };
@@ -24,7 +24,7 @@ pub struct MsStructFieldValue {
 
 #[derive(Clone, Debug, Default)]
 pub struct MsStructType {
-    fields: LinearMap<String, MsStructFieldValue>,
+    fields: HashMap<Box<str>, MsStructFieldValue>,
     size: usize,
 }
 
@@ -41,7 +41,7 @@ impl MsStructType {
         }
     }
 
-    pub fn add_field(&mut self, field_name: impl Into<String>, field_type: MsType) {
+    pub fn add_field(&mut self, field_name: impl Into<Box<str>>, field_type: MsType) {
         let size = field_type.size();
         let align = field_type.align();
 
@@ -70,7 +70,7 @@ impl MsStructType {
     pub fn set_data(
         &self,
         ptr: MsVal,
-        values: HashMap<String, MsVal>,
+        values: HashMap<Box<str>, MsVal>,
         ms_ctx: &mut MsContext,
         fbx: &mut FunctionBuilder<'_>,
         module: &mut ObjectModule,
@@ -81,7 +81,7 @@ impl MsStructType {
             if !v.ty.equal(&val.ty) {
                 panic!("Types don match {:?} != {:?}", v.ty, val.ty);
             }
-            self.set_field(&ptr, k.as_str(), val, ms_ctx, fbx, module);
+            self.set_field(&ptr, &k, val, ms_ctx, fbx, module);
         }
     }
     pub fn set_field(

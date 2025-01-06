@@ -5,14 +5,17 @@ use std::{
     rc::Rc,
 };
 
+use linear_map::LinearMap;
 use mantis_expression::pratt::Type;
+
+use crate::{native::instructions::Either, registries::types::StructWithGenerics};
 
 use super::{
     functions::{
         MsDeclaredFunction, MsFunctionRegistry, MsFunctionTemplates, MsTraitRegistry,
         MsTraitTemplates,
     },
-    types::{MsType, MsTypeRegistry, MsTypeTemplates},
+    types::{MsGenericTemplate, MsType, MsTypeRegistry, MsTypeTemplates, TypeNameWithGenerics},
 };
 
 #[derive(Default, Debug)]
@@ -35,6 +38,16 @@ pub struct MsModule {
 pub enum MsResolved {
     Function(Rc<MsDeclaredFunction>),
     Type(MsType),
+    Generic(Rc<MsGenericTemplate>),
+}
+
+impl MsResolved {
+    pub fn ty(&self) -> Option<MsType> {
+        match self {
+            MsResolved::Type(ms_type) => Some(ms_type.clone()),
+            _ => None,
+        }
+    }
 }
 
 impl MsModule {
@@ -52,14 +65,19 @@ impl MsModule {
                 }
                 {
                     let key = ty.to_string();
+
                     if let Some(template) = self.type_templates.registry.get(key.as_str()).cloned()
                     {
-                        let mut real_types = generics
-                            .iter()
-                            .map(|x| self.resolve(x))
-                            .collect::<Option<Vec<_>>>()?;
+                        log::info!("found template {}, generating struct", key);
+                        let mut real_types = HashMap::<Box<str>, MsType>::new();
 
-                        let generated_type = template.generate(real_types);
+                        for (generic_name, ty) in template.generics.iter().zip(generics.iter()) {
+                            if let Some(MsResolved::Type(real_ty)) = self.resolve(ty) {
+                                real_types.insert(generic_name.as_str().into(), real_ty);
+                            }
+                        }
+
+                        let generated_type = template.generate(&real_types, &self);
                         self.type_registry
                             .registry
                             .insert(generic_key, generated_type.clone());
@@ -72,10 +90,6 @@ impl MsModule {
                             .collect::<Option<Vec<_>>>()?;
 
                         let generated_func = template.generate(real_types);
-                        // self.type_registry
-                        //     .registry
-                        //     .insert(generic_key, generated_func.clone());
-                        // return Some(MsResolved::Function(generated_func));
                         todo!("compile the generated func")
                     }
                 }
@@ -96,10 +110,63 @@ impl MsModule {
                 let module = self.submodules.get_mut(key.as_str())?;
                 return module.resolve(child);
             }
+            Type::Struct { fields } => {
+                for (key, value) in fields {}
+                todo!()
+            }
             _ => unreachable!("unhandled"),
         };
+        return None;
+    }
 
-        todo!()
+    pub fn resolve_with_generics(
+        &mut self,
+        type_name: &Type,
+        root_generices: &[String],
+    ) -> MsGenericTemplate {
+        match type_name {
+            Type::WithGenerics(ty, generics) => {
+                let template = MsGenericTemplate {
+                    generics: root_generices.to_vec(),
+                    inner_type: Either::Left(TypeNameWithGenerics::from_type(type_name)),
+                };
+
+                return template;
+            }
+            Type::Word(span) => {
+                let template = MsGenericTemplate {
+                    generics: root_generices.to_vec(),
+                    inner_type: Either::Left(TypeNameWithGenerics::from_type(type_name)),
+                };
+
+                return template;
+            }
+            Type::Struct { fields } => {
+                let mut map = LinearMap::new();
+
+                for (key, value) in fields {
+                    let ty = TypeNameWithGenerics::from_type(value);
+                    map.insert(key.as_str().into(), ty);
+                }
+
+                let template = MsGenericTemplate {
+                    generics: root_generices.to_vec(),
+                    inner_type: Either::Right(StructWithGenerics { map }),
+                };
+
+                return template;
+            }
+            Type::Nested(root, child) => {
+                let key = root.to_string();
+                let module = self
+                    .submodules
+                    .get_mut(key.as_str())
+                    .expect("can't find module");
+                return module.resolve_with_generics(child, root_generices);
+            }
+
+            _ => unreachable!("unhandled"),
+        };
     }
 }
 

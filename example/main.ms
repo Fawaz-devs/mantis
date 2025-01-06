@@ -5,17 +5,21 @@ fn write(fd i64, buffer_ptr i64, len i64) i64 extern;
 
 fn strlen(ptr i64) i64 extern;
 
-
 type ptr[T] = i64;
 
 type ArraySlice[T] = struct {
-    ptr ptr[T],
+    pointer ptr[T],
     len u64
 }
 
 type StrSlice = ArraySlice[u8];
 
 fn main(argc i32, argv i64) i32 { 
+    let stdout = 1;
+    let s = "hello world";
+
+    write(stdout, s.pointer, s.len);
+
     mut i = 0;
     loop {
         if i >= argc as i64 {
@@ -24,7 +28,7 @@ fn main(argc i32, argv i64) i32 {
 
         let arg_char_ptr = *(argv + i * 8);
         let arg_len = strlen(arg_char_ptr);
-        write(1, arg_char_ptr, arg_len);
+        write(stdout, arg_char_ptr, arg_len);
         i = i + 1;
     }
 
