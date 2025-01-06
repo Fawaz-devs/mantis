@@ -1,4 +1,9 @@
-use cranelift::prelude::{Block, FunctionBuilder, InstBuilder};
+use std::ops::Deref;
+
+use cranelift::{
+    codegen::ir::Inst,
+    prelude::{Block, FunctionBuilder, InstBuilder},
+};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
@@ -177,5 +182,51 @@ pub struct MsLoopScope {
 
 #[derive(Debug, Default, Clone)]
 pub struct MsLoopScopes {
-    pub scopes: Vec<MsLoopScope>,
+    scopes: Vec<MsLoopScope>,
+}
+
+impl MsLoopScopes {
+    pub fn new_loop(&mut self, name: Option<Box<str>>, fbx: &mut FunctionBuilder) -> &MsLoopScope {
+        let scope = MsLoopScope {
+            name,
+            entry_block: fbx.create_block(),
+            exit_block: fbx.create_block(),
+        };
+
+        fbx.ins().jump(scope.entry_block, &[]);
+        fbx.switch_to_block(scope.entry_block);
+        self.scopes.push(scope);
+        self.scopes.last().unwrap()
+    }
+
+    pub fn find_last_loop(&self, name: Option<&str>) -> Option<&MsLoopScope> {
+        if let Some(name) = name {
+            self.scopes.iter().rev().find(|x| {
+                let Some(scope_name) = &x.name else {
+                    return false;
+                };
+
+                scope_name.deref() == name
+            })
+        } else {
+            self.scopes.last()
+        }
+    }
+
+    pub fn end_loop(&mut self, name: Option<&str>, fbx: &mut FunctionBuilder) {
+        let scope = self.find_last_loop(name).expect("unidentified loop");
+        fbx.ins().jump(scope.entry_block, &[]);
+        fbx.seal_block(scope.entry_block);
+
+        fbx.switch_to_block(scope.exit_block);
+        fbx.seal_block(scope.exit_block);
+    }
+    pub fn break_out_of_loop(&mut self, name: Option<&str>, fbx: &mut FunctionBuilder) -> Inst {
+        let scope = self.find_last_loop(name).expect("unidentified loop");
+        fbx.ins().jump(scope.exit_block, &[])
+    }
+    pub fn continue_loop(&mut self, name: Option<&str>, fbx: &mut FunctionBuilder) -> Inst {
+        let scope = self.find_last_loop(name).expect("unidentified loop");
+        fbx.ins().jump(scope.entry_block, &[])
+    }
 }

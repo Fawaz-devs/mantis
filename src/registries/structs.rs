@@ -110,26 +110,26 @@ pub fn array_struct() -> MsStructType {
     return st;
 }
 
-pub fn pointer_template() -> MsGenericTemplate {
-    let mut st = MsGenericTemplate::default();
-    st.add_generic("T");
-    st.add_field(
-        "ptr",
-        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
-    );
-    st
-}
+// pub fn pointer_template() -> MsGenericTemplate {
+//     let mut st = MsGenericTemplate::default();
+//     st.add_generic("T");
+//     st.add_field(
+//         "ptr",
+//         Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+//     );
+//     st
+// }
 
-pub fn array_template() -> MsGenericTemplate {
-    let mut st = MsGenericTemplate::default();
-    st.add_generic("T");
-    st.add_field(
-        "size",
-        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
-    );
-    st.add_field(
-        "ptr",
-        Either::Left(MsType::Native(super::types::MsNativeType::U64)),
-    );
-    return st;
-}
+// pub fn array_template() -> MsGenericTemplate {
+//     let mut st = MsGenericTemplate::default();
+//     st.add_generic("T");
+//     st.add_field(
+//         "size",
+//         Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+//     );
+//     st.add_field(
+//         "ptr",
+//         Either::Left(MsType::Native(super::types::MsNativeType::U64)),
+//     );
+//     return st;
+// }

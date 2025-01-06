@@ -94,12 +94,12 @@ fn test_cranelift() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub struct IfElseChain {
+pub struct IfElseChainBuilder {
     else_block: Option<Block>,
     end_block: Block,
 }
 
-impl IfElseChain {
+impl IfElseChainBuilder {
     pub fn new_block(
         fbx: &mut FunctionBuilder,
         cond: impl FnOnce(&mut FunctionBuilder) -> Value,
@@ -184,7 +184,7 @@ fn build_ifelse_main_fn(ctx: &mut Context, fbx: &mut FunctionBuilderContext) {
     f.def_var(i, a);
 
     {
-        let mut chain = IfElseChain::new_block(
+        let mut chain = IfElseChainBuilder::new_block(
             &mut f,
             |f| f.ins().icmp_imm(condcodes::IntCC::Equal, a, 1),
             |f| {
@@ -283,7 +283,7 @@ fn build_loop_fn(ctx: &mut Context, fbx: &mut FunctionBuilderContext) {
     {
         let loopp = Loop::new(&mut f);
 
-        let mut chain = IfElseChain::new_block(
+        let mut chain = IfElseChainBuilder::new_block(
             &mut f,
             |f| {
                 let ivalue = f.use_var(i);

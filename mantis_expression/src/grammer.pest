@@ -62,7 +62,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       else_block = { "else" ~ (stmt | block) }
       loop_block = { "loop" ~ word? ~ block }
       for_loop = { "for" ~ word ~ "in" ~ expr ~ (stmt | block) }
-      type_decl = { "type" ~ type_name ~ "=" ~ ( enum_decl | struct_decl | type_name  ) }
+      type_decl = { "type" ~ type_name ~ "=" ~ ( enum_decl | struct_decl | type_name  ) ~ ";"? }
       struct_decl = { "struct" ~  "{" ~  typed_args_list ~ "}" }
       enum_variant = { word ~ ("(" ~ type_list ~ ")")? }
       enum_variants = { enum_variant ~ ( "," ~ enum_variant )* }

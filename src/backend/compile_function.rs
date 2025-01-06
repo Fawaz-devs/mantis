@@ -1,7 +1,3 @@
-use std::fmt::Write;
-use std::ops::Deref;
-use std::rc::Rc;
-
 use crate::frontend::tokens::MsContext;
 use crate::native::instructions::NodeResult;
 use crate::registries::functions::{FunctionType, MsDeclaredFunction};
@@ -9,13 +5,17 @@ use crate::registries::types::{MsNativeType, MsType};
 use crate::registries::variable::{MsVal, MsVar};
 use crate::registries::MsRegistryExt;
 use crate::scope::{drop_scope, drop_variable};
+use codegen::ir::Inst;
 use cranelift::{codegen::Context, prelude::*};
 use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use mantis_expression::node::BinaryOperation;
-use mantis_expression::pratt::{Block, FunctionDecl, Node, Rule, Term, WordSpan};
+use mantis_expression::pratt::{Block, ConditionalBlock, FunctionDecl, Node, Rule, Term, WordSpan};
 use mantis_expression::pratt::{IfElseChain, Statement, Type as MsTokenType};
 use rand::Rng;
+use std::fmt::Write;
+use std::ops::Deref;
+use std::rc::Rc;
 
 pub enum FinalType {
     Name(Box<str>),
@@ -31,7 +31,16 @@ pub fn resolve_typename(ty: &MsTokenType) -> Box<str> {
         MsTokenType::Nested(_, _) => todo!(),
         MsTokenType::Unknown => "unknown".into(),
         MsTokenType::Word(word_span) => word_span.as_str().into(),
-        MsTokenType::Ref(_, _) => todo!(),
+        MsTokenType::Ref(ty, mutable) => {
+            let mut s = String::with_capacity(512);
+            s.push('@');
+            if *mutable {
+                s.push_str(" mut ");
+            }
+            s.push_str(&resolve_typename(ty));
+
+            s.into()
+        }
     }
 }
 
@@ -61,7 +70,7 @@ pub fn compile_function(
         let ty = ms_ctx
             .type_registry
             .get(&ty_name)
-            .expect("invalid type_name");
+            .expect(&format!("undefined type_name {}", ty_name));
 
         ctx.func.signature.params.push(ty.to_abi_param().unwrap());
     }
@@ -146,7 +155,7 @@ pub fn compile_block(
     module: &mut ObjectModule,
     fbx: &mut FunctionBuilder,
     ms_ctx: &mut MsContext,
-) {
+) -> Option<Inst> {
     match block {
         Block::Closed(block) => {
             ms_ctx.var_scopes.new_scope();
@@ -154,14 +163,14 @@ pub fn compile_block(
             let vars = ms_ctx.var_scopes.exit_scope().unwrap();
             drop_scope(vars, ms_ctx, fbx, module);
         }
-        Block::Statements(stmts) => compile_statements(&stmts, module, fbx, ms_ctx),
+        Block::Statements(stmts) => return compile_statements(&stmts, module, fbx, ms_ctx),
         Block::Continuos(blocks) => {
             for block in blocks {
                 compile_block(block, module, fbx, ms_ctx);
             }
         }
         Block::IfElseChain(if_else_chain) => {
-            compile_if_else_chain(if_else_chain, module, fbx, ms_ctx);
+            compile_if_else_chain(&if_else_chain, fbx, module, ms_ctx);
         }
         Block::Loop(word_span, block) => {
             compile_loop(word_span.clone(), block, module, fbx, ms_ctx);
@@ -171,6 +180,8 @@ pub fn compile_block(
             log::warn!("Empty block, doing nothing")
         }
     }
+
+    return None;
 }
 
 pub fn rule_to_binary_operation(rule: Rule) -> Option<BinaryOperation> {
@@ -511,7 +522,7 @@ pub fn compile_statements(
     module: &mut ObjectModule,
     fbx: &mut FunctionBuilder,
     ms_ctx: &mut MsContext,
-) {
+) -> Option<Inst> {
     for stmt in statements {
         match stmt {
             Statement::Let(word_span, node, expected_type, is_mutable) => {
@@ -542,61 +553,41 @@ pub fn compile_statements(
                 }
             }
             Statement::Return(node) => {
-                if let Some(var) = compile_node(node, module, fbx, ms_ctx) {
+                let ret_inst = if let Some(var) = compile_node(node, module, fbx, ms_ctx) {
                     let val = var.value(fbx);
-                    fbx.ins().return_(&[val]);
+                    fbx.ins().return_(&[val])
                 } else {
-                    fbx.ins().return_(&[]);
-                }
+                    fbx.ins().return_(&[])
+                };
+
+                return Some(ret_inst);
             }
             Statement::Break(word_span) => {
-                log::warn!(
-                    "dropping variables is unhandled when breaking out of loop {:?}",
-                    word_span
-                );
+                // log::warn!(
+                //     "dropping variables is unhandled when breaking out of loop {:?}",
+                //     word_span
+                // );
 
-                if let Some(loop_name) = word_span {
-                    for loop_block in ms_ctx.loop_scopes.scopes.iter().rev() {
-                        if let Some(loop_block_name) = &loop_block.name {
-                            if loop_block_name.deref() == loop_name.as_str() {
-                                fbx.ins().jump(loop_block.exit_block, &[]);
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    let loop_block = ms_ctx.loop_scopes.scopes.last().unwrap();
-                    fbx.ins().jump(loop_block.exit_block, &[]);
-                }
+                let name = word_span.as_ref().map(|x| x.as_str());
 
-                break;
+                return Some(ms_ctx.loop_scopes.break_out_of_loop(name, fbx));
             }
             Statement::Continue(word_span) => {
-                log::warn!(
-                    "dropping variables is unhandled when continuing the loop {:?}",
-                    word_span
-                );
-                if let Some(loop_name) = word_span {
-                    for loop_block in ms_ctx.loop_scopes.scopes.iter().rev() {
-                        if let Some(loop_block_name) = &loop_block.name {
-                            if loop_block_name.deref() == loop_name.as_str() {
-                                fbx.ins().jump(loop_block.entry_block, &[]);
-                                break;
-                            }
-                        }
-                    }
-                } else {
-                    let loop_block = ms_ctx.loop_scopes.scopes.last().unwrap();
-                    fbx.ins().jump(loop_block.entry_block, &[]);
-                }
+                // log::warn!(
+                //     "dropping variables is unhandled when continuing the loop {:?}",
+                //     word_span
+                // );
 
-                break;
+                let name = word_span.as_ref().map(|x| x.as_str());
+                return Some(ms_ctx.loop_scopes.continue_loop(name, fbx));
             }
             Statement::Expr(node) => {
                 compile_node(node, module, fbx, ms_ctx);
             }
         }
     }
+
+    return None;
 }
 
 pub fn compile_loop(
@@ -606,16 +597,147 @@ pub fn compile_loop(
     fbx: &mut FunctionBuilder,
     ms_ctx: &mut MsContext,
 ) {
-    todo!();
+    let loop_name = loop_name.as_ref().map(|x| x.as_str());
+    ms_ctx.var_scopes.new_scope();
+    ms_ctx
+        .loop_scopes
+        .new_loop(loop_name.map(|x| x.into()), fbx);
+
+    compile_block(loop_block, module, fbx, ms_ctx);
+
+    ms_ctx.loop_scopes.end_loop(loop_name, fbx);
+    let scope = ms_ctx.var_scopes.exit_scope().unwrap();
+    drop_scope(scope, &ms_ctx, fbx, module);
+}
+
+pub struct IfElseChainBuilder {
+    else_block: Option<cranelift::prelude::Block>,
+    end_block: cranelift::prelude::Block,
+}
+
+impl IfElseChainBuilder {
+    pub fn new_block(
+        block: &ConditionalBlock,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) -> Self {
+        let if_block = fbx.create_block();
+        let else_block = fbx.create_block();
+        let end_block = fbx.create_block();
+
+        ms_ctx.var_scopes.new_scope();
+
+        let value = compile_node(&block.condition, module, fbx, ms_ctx).unwrap();
+        let value = value.value(fbx);
+        fbx.ins().brif(value, if_block, &[], else_block, &[]);
+        fbx.switch_to_block(if_block);
+
+        let inst = compile_block(&block.block, module, fbx, ms_ctx);
+        let scope = ms_ctx.var_scopes.exit_scope().unwrap();
+        drop_scope(scope, ms_ctx, fbx, module);
+        if inst.is_none() {
+            fbx.ins().jump(end_block, &[]);
+        }
+
+        fbx.seal_block(if_block);
+
+        Self {
+            else_block: Some(else_block),
+            end_block,
+        }
+    }
+
+    pub fn elseif_block(
+        &mut self,
+        block: &ConditionalBlock,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) {
+        let if_block = fbx.create_block();
+        let else_block = fbx.create_block();
+        let previous_else_block = self.else_block.replace(else_block).unwrap();
+        let end_block = self.end_block;
+        fbx.switch_to_block(previous_else_block);
+
+        ms_ctx.var_scopes.new_scope();
+
+        let value = compile_node(&block.condition, module, fbx, ms_ctx).unwrap();
+        let value = value.value(fbx);
+        fbx.ins().brif(value, if_block, &[], else_block, &[]);
+        fbx.seal_block(previous_else_block);
+
+        fbx.switch_to_block(if_block);
+
+        let inst = compile_block(&block.block, module, fbx, ms_ctx);
+        let scope = ms_ctx.var_scopes.exit_scope().unwrap();
+        drop_scope(scope, ms_ctx, fbx, module);
+        if inst.is_none() {
+            fbx.ins().jump(end_block, &[]);
+        }
+        // if compile_block(&block.block, module, fbx, ms_ctx).is_none() {
+        //     fbx.ins().jump(end_block, &[]);
+        // }
+        fbx.seal_block(if_block);
+    }
+
+    pub fn else_block(
+        &mut self,
+        block: &Block,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) {
+        let else_block = self.else_block.take().unwrap();
+        fbx.switch_to_block(else_block);
+
+        ms_ctx.var_scopes.new_scope();
+
+        let inst = compile_block(&block, module, fbx, ms_ctx);
+        let scope = ms_ctx.var_scopes.exit_scope().unwrap();
+        drop_scope(scope, ms_ctx, fbx, module);
+        if inst.is_none() {
+            fbx.ins().jump(self.end_block, &[]);
+        }
+
+        // if compile_block(&block, module, fbx, ms_ctx).is_none() {
+        //     fbx.ins().jump(self.end_block, &[]);
+        // }
+        fbx.seal_block(else_block);
+    }
+
+    pub fn end(
+        &mut self,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) {
+        if self.else_block.is_some() {
+            self.else_block(&Block::Empty, fbx, module, ms_ctx);
+        }
+        fbx.switch_to_block(self.end_block);
+        fbx.seal_block(self.end_block);
+    }
 }
 
 pub fn compile_if_else_chain(
     if_else_chain: &IfElseChain,
-    module: &mut ObjectModule,
     fbx: &mut FunctionBuilder,
+    module: &mut ObjectModule,
     ms_ctx: &mut MsContext,
 ) {
-    todo!()
+    let mut builder = IfElseChainBuilder::new_block(&if_else_chain.if_block, fbx, module, ms_ctx);
+
+    for elseifblocks in if_else_chain.elif_blocks.iter() {
+        builder.elseif_block(&elseifblocks, fbx, module, ms_ctx);
+    }
+
+    if let Some(elseblock) = &if_else_chain.else_block {
+        builder.else_block(&elseblock, fbx, module, ms_ctx);
+    }
+
+    builder.end(fbx, module, ms_ctx);
 }
 
 pub fn random_readable_char(mut rng: impl rand::Rng) -> char {

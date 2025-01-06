@@ -11,10 +11,7 @@ use mantis_expression::node::BinaryOperation;
 
 use crate::native::instructions::Either;
 
-use super::{
-    structs::{pointer_template, MsStructType},
-    MsRegistry, MsRegistryExt,
-};
+use super::{structs::MsStructType, MsRegistry, MsRegistryExt};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsNativeType {
@@ -313,16 +310,29 @@ pub fn binary_cmp_op_to_condcode_intcc(op: BinaryOperation, signed: bool) -> con
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct MsGenericType {
-    pub generics: Vec<String>,
-    pub generic_map: BTreeMap<String, String>, // field ->  type_name
+#[derive(Clone, Debug, Default)]
+pub struct TypeNameWithGenerics {
+    pub name: Box<str>,
+    pub generics: Vec<TypeNameWithGenerics>,
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct StructWithGenerics {
+    map: LinearMap<Box<str>, TypeNameWithGenerics>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MsGenericType {
+    pub generics: Vec<String>,
+    // pub generic_map: HashMap<String, String>, // field ->  type_name
+    pub inner_type: Either<TypeNameWithGenerics, StructWithGenerics>,
+}
+
+#[derive(Clone, Debug)]
 pub struct MsGenericTemplate {
-    generics: Vec<String>,
-    generic_map: LinearMap<String, Either<MsType, String>>, // field ->  type_name
+    pub generics: Vec<String>,
+    pub inner_type: Either<TypeNameWithGenerics, StructWithGenerics>,
+    // generic_map: LinearMap<String, Either<MsType, String>>, // field ->  type_name
 }
 
 impl MsGenericTemplate {
@@ -332,35 +342,35 @@ impl MsGenericTemplate {
         self.generics.push(s);
     }
 
-    pub fn add_field(&mut self, field_name: impl Into<String>, field_type: Either<MsType, String>) {
-        self.generic_map.insert(field_name.into(), field_type);
-    }
+    // pub fn add_field(&mut self, field_name: impl Into<String>, field_type: Either<MsType, String>) {
+    //     self.generic_map.insert(field_name.into(), field_type);
+    // }
 
-    pub fn to_struct(&self, generics: &BTreeMap<String, MsType>) -> MsStructType {
-        assert!(self.generics.len() == generics.len());
+    // pub fn to_struct(&self, generics: &BTreeMap<String, MsType>) -> MsStructType {
+    //     assert!(self.generics.len() == generics.len());
 
-        let mut st = MsStructType::default();
+    //     let mut st = MsStructType::default();
 
-        for (k, v) in &self.generic_map {
-            let ty = match v {
-                Either::Left(ty) => ty,
-                Either::Right(gen) => generics.get(gen).expect("Missing generic type"),
-            };
+    //     for (k, v) in &self.generic_map {
+    //         let ty = match v {
+    //             Either::Left(ty) => ty,
+    //             Either::Right(gen) => generics.get(gen).expect("Missing generic type"),
+    //         };
 
-            match ty {
-                MsType::Native(nty) => st.add_field(k, MsType::Native(*nty)),
-                MsType::Struct(field) => {
-                    st.add_field(k, MsType::Struct(field.clone()));
-                }
-                // MsType::Generic(gen) => {
-                //     let field = gen.to_struct(generics);
-                //     st.add_field(k, MsType::Struct(Rc::new(field)));
-                // }
-                MsType::Ref(ms_type, _) => todo!(),
-            };
-        }
-        st
-    }
+    //         match ty {
+    //             MsType::Native(nty) => st.add_field(k, MsType::Native(*nty)),
+    //             MsType::Struct(field) => {
+    //                 st.add_field(k, MsType::Struct(field.clone()));
+    //             }
+    //             // MsType::Generic(gen) => {
+    //             //     let field = gen.to_struct(generics);
+    //             //     st.add_field(k, MsType::Struct(Rc::new(field)));
+    //             // }
+    //             MsType::Ref(ms_type, _) => todo!(),
+    //         };
+    //     }
+    //     st
+    // }
 
     pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved>) -> MsType {
         todo!()
@@ -496,27 +506,27 @@ impl Default for MsTypeRegistry {
         let pointer_ty = pointer_template();
 
         {
-            let mut generics = BTreeMap::new();
-            generics.insert("T".into(), MsType::Native(MsNativeType::Void));
-            registry.insert(
-                "pointer[void]".into(),
-                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            );
-            generics.insert("T".into(), MsType::Native(MsNativeType::I64));
-            registry.insert(
-                "pointer[i64]".into(),
-                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            );
-            generics.insert("T".into(), MsType::Native(MsNativeType::F64));
-            registry.insert(
-                "pointer[f64]".into(),
-                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            );
-            generics.insert("T".into(), MsType::Native(MsNativeType::U8));
-            registry.insert(
-                "pointer[u8]".into(),
-                MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            );
+            // let mut generics = BTreeMap::new();
+            // generics.insert("T".into(), MsType::Native(MsNativeType::Void));
+            // registry.insert(
+            //     "pointer[void]".into(),
+            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            // );
+            // generics.insert("T".into(), MsType::Native(MsNativeType::I64));
+            // registry.insert(
+            //     "pointer[i64]".into(),
+            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            // );
+            // generics.insert("T".into(), MsType::Native(MsNativeType::F64));
+            // registry.insert(
+            //     "pointer[f64]".into(),
+            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            // );
+            // generics.insert("T".into(), MsType::Native(MsNativeType::U8));
+            // registry.insert(
+            //     "pointer[u8]".into(),
+            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
+            // );
         }
 
         // registry.insert("pointer".into(), MsType::Generic(Rc::new(pointer_ty)));
