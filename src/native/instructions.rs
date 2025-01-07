@@ -5,7 +5,7 @@ use mantis_expression::node::BinaryOperation;
 use mantis_tokens::MantisLexerTokens;
 
 use crate::registries::{
-    types::MsType,
+    types::{MsType, MsTypeId},
     variable::{MsVal, MsVar},
 };
 
@@ -296,38 +296,39 @@ impl NodeResult {
         match self {
             NodeResult::Val(val) => val.value,
             NodeResult::Var(var) => fbx.use_var(var.c_var),
-            NodeResult::StructAccessVar { ptr, offset } => {
-                let value = ptr.value();
-                fbx.ins().load(
-                    ptr.ty.to_cl_type().unwrap(),
-                    MemFlags::new(),
-                    value,
-                    *offset as i32,
-                )
-            }
+            // NodeResult::StructAccessVar { ptr, offset } => {
+            //     let value = ptr.value();
+            //     fbx.ins().load(
+            //         ptr.ty.to_cl_type().unwrap(),
+            //         MemFlags::new(),
+            //         value,
+            //         *offset as i32,
+            //     )
+            // }
+            _ => todo!(),
         }
     }
 
-    pub fn ty(&self) -> &MsType {
+    pub fn ty(&self) -> MsTypeId {
         match self {
-            NodeResult::Val(val) => &val.ty,
-            NodeResult::Var(var) => &var.ty,
-            NodeResult::StructAccessVar { ptr, offset } => &ptr.ty,
+            NodeResult::Val(val) => val.ty_id,
+            NodeResult::Var(var) => var.ty_id,
+            NodeResult::StructAccessVar { ptr, offset } => ptr.ty_id,
         }
     }
 
-    pub fn type_name(&self) -> &str {
-        match self {
-            NodeResult::Val(ms_val) => ms_val.type_name(),
-            NodeResult::Var(ms_var) => ms_var.type_name(),
-            NodeResult::StructAccessVar { ptr, offset } => todo!(),
-        }
-    }
+    // pub fn type_name(&self) -> &str {
+    //     match self {
+    //         NodeResult::Val(ms_val) => ms_val.type_name(),
+    //         NodeResult::Var(ms_var) => ms_var.type_name(),
+    //         NodeResult::StructAccessVar { ptr, offset } => todo!(),
+    //     }
+    // }
 
     pub fn to_ms_val(&self, fbx: &mut FunctionBuilder) -> MsVal {
         let ty = self.ty().clone();
         let val = self.value(fbx);
-        MsVal::new(val, ty, self.type_name())
+        MsVal::new(ty, val)
     }
 }
 

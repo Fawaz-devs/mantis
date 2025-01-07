@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashMap},
+    fmt::Display,
     hash::Hash,
     rc::Rc,
 };
@@ -9,9 +10,12 @@ use cranelift::prelude::*;
 use linear_map::LinearMap;
 use mantis_expression::{node::BinaryOperation, pratt};
 
-use crate::native::instructions::Either;
+use crate::{backend::compile_function::random_string, native::instructions::Either};
 
-use super::{modules::MsModule, structs::MsStructType, MsRegistry, MsRegistryExt};
+use super::{
+    functions::MsDeclaredFunction, modules::MsModule, structs::MsStructType, MsRegistry,
+    MsRegistryExt,
+};
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MsNativeType {
@@ -316,13 +320,17 @@ pub struct TypeNameWithGenerics {
     pub generics: Vec<TypeNameWithGenerics>,
 }
 impl TypeNameWithGenerics {
-    pub fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+    pub fn generate(
+        &self,
+        real_types: &HashMap<Box<str>, MsTypeWithId>,
+        ms_module: &mut MsModule,
+    ) -> MsTypeWithId {
         if let Some(ty) = real_types.get(&self.name) {
             assert!(self.generics.is_empty());
             return ty.clone();
         }
 
-        if let Some(ty) = ms_module.type_registry.get(&self.name) {
+        if let Some(ty) = ms_module.type_registry.get_from_str(&self.name) {
             assert!(self.generics.is_empty());
             return ty.clone();
         }
@@ -356,7 +364,11 @@ pub struct StructWithGenerics {
     pub map: LinearMap<Box<str>, TypeNameWithGenerics>,
 }
 impl StructWithGenerics {
-    fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+    fn generate(
+        &self,
+        real_types: &HashMap<Box<str>, MsTypeWithId>,
+        ms_module: &mut MsModule,
+    ) -> MsTypeWithId {
         let mut struct_ty = MsStructType::default();
 
         for (field_name, field_ty) in &self.map {
@@ -364,7 +376,12 @@ impl StructWithGenerics {
             struct_ty.add_field(field_name.clone(), ty);
         }
 
-        MsType::Struct(Rc::new(struct_ty))
+        let ty = MsType::Struct(Rc::new(struct_ty));
+
+        let ty_name = random_string(32);
+        let id = ms_module.type_registry.add_type(ty_name, ty.clone());
+
+        return MsTypeWithId { ty, id };
     }
 }
 
@@ -411,7 +428,11 @@ impl MsGenericTemplate {
     //     st
     // }
 
-    pub fn generate(&self, real_types: &HashMap<Box<str>, MsType>, ms_module: &MsModule) -> MsType {
+    pub fn generate(
+        &self,
+        real_types: &HashMap<Box<str>, MsTypeWithId>,
+        ms_module: &mut MsModule,
+    ) -> MsTypeWithId {
         match &self.inner_type {
             Either::Left(ty) => ty.generate(&real_types, ms_module),
             Either::Right(struct_ty) => struct_ty.generate(&real_types, ms_module),
@@ -501,6 +522,7 @@ impl MsType {
         match self {
             MsType::Native(ty) => ty.to_cl_type(),
             MsType::Ref(ty, _) => Some(types::I64),
+            MsType::Struct(_) => Some(types::I64),
             _ => todo!(),
         }
     }
@@ -514,6 +536,69 @@ impl MsType {
             // }
             _ => todo!(),
         }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MsTypeId(usize);
+
+impl Display for MsTypeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{:?}", self))
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct MsTypeNameRegistry {
+    map: HashMap<Box<str>, MsTypeId>, // map -> type_id
+    inner: Vec<MsType>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MsTypeWithId {
+    pub id: MsTypeId,
+    pub ty: MsType,
+}
+
+impl MsTypeNameRegistry {
+    pub fn get_from_str(&self, s: &str) -> Option<MsTypeWithId> {
+        let id = *self.map.get(s)?;
+        let ty = self.get_from_type_id(id)?;
+
+        Some(MsTypeWithId { id, ty })
+    }
+
+    pub fn get_from_type_id(&self, id: MsTypeId) -> Option<MsType> {
+        self.inner.get(id.0).cloned()
+    }
+
+    pub fn get_type_id(&self, s: &str) -> Option<MsTypeId> {
+        self.map.get(s).cloned()
+    }
+
+    pub fn add_type(&mut self, ty_name: impl Into<Box<str>>, ty: MsType) -> MsTypeId {
+        let idx = MsTypeId(self.inner.len());
+        if self.map.insert(ty_name.into(), idx).is_some() {
+            panic!("A Type with that name already exists");
+        }
+        self.inner.push(ty);
+        idx
+    }
+
+    pub fn with_default_types() -> Self {
+        let mut registry = Self::default();
+
+        registry.add_type("i8", MsType::Native(MsNativeType::I8));
+        registry.add_type("i16", MsType::Native(MsNativeType::I16));
+        registry.add_type("i32", MsType::Native(MsNativeType::I32));
+        registry.add_type("i64", MsType::Native(MsNativeType::I64));
+        registry.add_type("u8", MsType::Native(MsNativeType::U8));
+        registry.add_type("u32", MsType::Native(MsNativeType::U32));
+        registry.add_type("u64", MsType::Native(MsNativeType::U64));
+        registry.add_type("f32", MsType::Native(MsNativeType::F32));
+        registry.add_type("f64", MsType::Native(MsNativeType::F64));
+
+        registry
     }
 }
 
@@ -542,12 +627,12 @@ impl Default for MsTypeRegistry {
         registry.insert("i32".into(), MsType::Native(MsNativeType::I32));
         registry.insert("i64".into(), MsType::Native(MsNativeType::I64));
         registry.insert("u8".into(), MsType::Native(MsNativeType::U8));
-        // registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
         registry.insert("u32".into(), MsType::Native(MsNativeType::U32));
         registry.insert("u64".into(), MsType::Native(MsNativeType::U64));
         registry.insert("f32".into(), MsType::Native(MsNativeType::F32));
         registry.insert("f64".into(), MsType::Native(MsNativeType::F64));
-        registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
+        // registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
+        // registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
         // registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
 
         // let pointer_ty = pointer_template();
@@ -610,4 +695,9 @@ impl Default for MsTemplateRegistry {
 #[derive(Default, Debug)]
 pub struct MsTypeTemplates {
     pub registry: HashMap<Box<str>, Rc<MsGenericTemplate>>,
+}
+
+#[derive(Debug, Default)]
+pub struct MsTypeMethodFunctions {
+    pub registry: HashMap<Box<str>, HashMap<Box<str>, Rc<MsDeclaredFunction>>>, // type -> to functions
 }

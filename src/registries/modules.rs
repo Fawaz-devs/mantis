@@ -15,7 +15,10 @@ use super::{
         MsDeclaredFunction, MsFunctionRegistry, MsFunctionTemplates, MsTraitRegistry,
         MsTraitTemplates,
     },
-    types::{MsGenericTemplate, MsType, MsTypeRegistry, MsTypeTemplates, TypeNameWithGenerics},
+    types::{
+        MsGenericTemplate, MsType, MsTypeNameRegistry, MsTypeRegistry, MsTypeTemplates,
+        MsTypeWithId, TypeNameWithGenerics,
+    },
 };
 
 #[derive(Default, Debug)]
@@ -29,7 +32,9 @@ pub struct MsModule {
     pub fn_templates: MsFunctionTemplates,
     pub trait_registry: MsTraitRegistry,
     pub trait_templates: MsTraitTemplates,
-    pub type_registry: MsTypeRegistry,
+    // pub type_registry: MsTypeRegistry,
+    pub type_registry: MsTypeNameRegistry,
+
     pub type_templates: MsTypeTemplates,
     pub submodules: HashMap<Box<str>, MsModule>,
 }
@@ -37,12 +42,12 @@ pub struct MsModule {
 #[derive(Debug, Clone)]
 pub enum MsResolved {
     Function(Rc<MsDeclaredFunction>),
-    Type(MsType),
+    Type(MsTypeWithId),
     Generic(Rc<MsGenericTemplate>),
 }
 
 impl MsResolved {
-    pub fn ty(&self) -> Option<MsType> {
+    pub fn ty(&self) -> Option<MsTypeWithId> {
         match self {
             MsResolved::Type(ms_type) => Some(ms_type.clone()),
             _ => None,
@@ -52,11 +57,11 @@ impl MsResolved {
 
 impl MsModule {
     pub fn resolve(&mut self, type_name: &Type) -> Option<MsResolved> {
+        let generic_key = type_name.to_string();
         match type_name {
             Type::WithGenerics(ty, generics) => {
-                let generic_key = type_name.to_string();
                 {
-                    if let Some(ty) = self.type_registry.registry.get(&generic_key) {
+                    if let Some(ty) = self.type_registry.get_from_str(&generic_key) {
                         return Some(MsResolved::Type(ty.clone()));
                     }
                     if let Some(func) = self.fn_registry.registry.get(generic_key.as_str()) {
@@ -69,7 +74,7 @@ impl MsModule {
                     if let Some(template) = self.type_templates.registry.get(key.as_str()).cloned()
                     {
                         log::info!("found template {}, generating struct", key);
-                        let mut real_types = HashMap::<Box<str>, MsType>::new();
+                        let mut real_types = HashMap::<Box<str>, MsTypeWithId>::new();
 
                         for (generic_name, ty) in template.generics.iter().zip(generics.iter()) {
                             if let Some(MsResolved::Type(real_ty)) = self.resolve(ty) {
@@ -77,10 +82,19 @@ impl MsModule {
                             }
                         }
 
-                        let generated_type = template.generate(&real_types, &self);
-                        self.type_registry
-                            .registry
-                            .insert(generic_key, generated_type.clone());
+                        let generated_type = template.generate(&real_types, self);
+
+                        // let ty_id = self
+                        //     .type_registry
+                        //     .add_type(generic_key, generated_type.clone());
+
+                        // let generated_type = MsTypeWithId {
+                        //     id: ty_id,
+                        //     ty: generated_type,
+                        // };
+
+                        // .registry
+                        // .insert(generic_key, generated_type.clone());
                         return Some(MsResolved::Type(generated_type));
                     }
                     if let Some(template) = self.fn_templates.registry.get(key.as_str()).cloned() {
@@ -97,7 +111,7 @@ impl MsModule {
             }
             Type::Word(span) => {
                 let key = span.as_str();
-                if let Some(ty) = self.type_registry.registry.get(key) {
+                if let Some(ty) = self.type_registry.get_from_str(key) {
                     return Some(MsResolved::Type(ty.clone()));
                 }
                 if let Some(func) = self.fn_registry.registry.get(key) {

@@ -6,7 +6,10 @@ use mantis_expression::pratt::{FunctionDecl, WordSpan};
 
 use crate::frontend::tokens::MsFunctionDeclaration;
 
-use super::{types::MsType, MsRegistry, MsRegistryExt};
+use super::{
+    types::{MsType, MsTypeId},
+    MsRegistry, MsRegistryExt,
+};
 
 #[derive(Clone, Debug, Copy)]
 pub enum FunctionType {
@@ -54,17 +57,17 @@ impl Default for MsFunctionRegistry {
 
 #[derive(Debug, Default)]
 pub struct MsTraitRegistry {
-    pub registry: HashMap<Box<str>, HashMap<Box<str>, MsFunctionRegistry>>,
+    pub registry: HashMap<Box<str>, HashMap<MsTypeId, MsFunctionRegistry>>,
 }
 
 impl MsTraitRegistry {
     pub(crate) fn find_trait_for(
         &self,
         trait_name: &str,
-        type_name: &str,
+        type_id: MsTypeId,
     ) -> Option<&MsFunctionRegistry> {
         let trait_registry = self.registry.get(trait_name)?;
-        let functions = trait_registry.get(type_name)?;
+        let functions = trait_registry.get(&type_id)?;
 
         Some(functions)
     }

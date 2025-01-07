@@ -202,7 +202,7 @@ impl Type {
     pub fn word(&self) -> Option<&str> {
         match self {
             Type::Word(word_span) => Some(word_span.as_str()),
-            _ => unreachable!(),
+            _ => todo!(),
         }
     }
 }

@@ -960,146 +960,27 @@ impl MsFunctionDeclaration {
         module: &mut ObjectModule,
         ms_ctx: &mut MsContext,
     ) -> FuncId {
-        ctx.func.signature.returns.clear();
-        ctx.func.signature.params.clear();
-        ctx.func.signature.params = self
-            .arguments
-            .iter()
-            .map(|x| {
-                x.var_type
-                    .to_abi_param()
-                    .expect("Function Arguments can't be void")
-            })
-            .collect();
+        todo!()
+        // ctx.func.signature.returns.clear();
+        // ctx.func.signature.params.clear();
+        // ctx.func.signature.params = self
+        //     .arguments
+        //     .iter()
+        //     .map(|x| {
+        //         x.var_type
+        //             .to_abi_param()
+        //             .expect("Function Arguments can't be void")
+        //     })
+        //     .collect();
 
-        if let Some(var_ty) = self.return_type.to_abi_param() {
-            ctx.func.signature.returns.push(var_ty);
-        }
+        // if let Some(var_ty) = self.return_type.to_abi_param() {
+        //     ctx.func.signature.returns.push(var_ty);
+        // }
 
-        if self.body.is_empty() || matches!(self.fn_type, FunctionType::Extern) {
-            let func_id = declare_external_function(
-                &self.name,
-                &format!("ext_{}", self.name),
-                ctx.func.signature.clone(),
-                module,
-                fbx,
-                ctx,
-            )
-            .unwrap();
-
-            return func_id;
-        }
-
-        let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
-
-        let entry_block = builder.create_block();
-        ms_ctx.scopes.new_scope(entry_block, MsClScopeType::Entry);
-
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
-
-        let values = builder.block_params(entry_block).to_vec();
-        for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
-            let var = ms_ctx.new_variable();
-            let ty = variable.var_type.to_cl_type().expect("type can't be void");
-            let ms_var = MsVar::new(
-                variable.var_type.clone(),
-                var,
-                variable.var_type.to_string(),
-            );
-            ms_ctx
-                .scopes
-                .last_scope_mut()
-                .unwrap()
-                .variables
-                .registry
-                .insert(variable.name.as_str().into(), ms_var);
-
-            builder.declare_var(var, ty);
-            builder.def_var(var, value);
-        }
-        for expression in &self.body {
-            expression.translate(ms_ctx, &mut builder, module).unwrap();
-        }
-
-        while let Some(scope) = ms_ctx.scopes.exit_scope() {
-            if matches!(scope.scope_type, MsClScopeType::Entry) {
-                break;
-            }
-        }
-
-        builder.seal_all_blocks();
-        builder.finalize();
-
-        let func_id = module
-            .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
-            .unwrap();
-
-        log::info!("Function Declared {} {}", self.name, func_id);
-
-        module.define_function(func_id, ctx).unwrap();
-        module.clear_context(ctx);
-
-        return func_id;
-
-        // if let Some(expressions) = &self.body {
-        //     let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
-
-        //     let entry_block = builder.create_block();
-
-        //     builder.append_block_params_for_function_params(entry_block);
-        //     builder.switch_to_block(entry_block);
-
-        //     let values = builder.block_params(entry_block).to_vec();
-        //     for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
-        //         let var = ms_ctx.new_variable();
-        //         // variables.insert(variable.name.clone(), value);
-        //         if let VariableType::Native(t) = variable.var_type {
-        //             builder.try_declare_var(var, t).unwrap();
-        //             builder.try_def_var(var, value).unwrap();
-        //             ms_ctx.local_variables.insert(
-        //                 variable.name.clone(),
-        //                 CraneliftVariable {
-        //                     var,
-        //                     ms_var: variable.clone(),
-        //                 },
-        //             );
-        //         } else if let VariableType::BuiltIn(t) = variable.var_type {
-        //             let t = t.to_cranelift_type().unwrap();
-        //             builder.try_declare_var(var, t).unwrap();
-        //             builder.try_def_var(var, value).unwrap();
-        //             ms_ctx.local_variables.insert(
-        //                 variable.name.clone(),
-        //                 CraneliftVariable {
-        //                     var,
-        //                     ms_var: variable.clone(),
-        //                 },
-        //             );
-        //         } else {
-        //             log::error!("Unsupported variable type {:?}", variable);
-        //         }
-        //     }
-        //     for expression in expressions {
-        //         expression.translate(ms_ctx, &mut builder, module);
-        //     }
-        //     builder.seal_all_blocks();
-        //     builder.finalize();
-
-        //     let func_id = module
-        //         .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
-        //         .unwrap();
-
-        //     log::info!("Function Declared {} {}", self.name, func_id);
-
-        //     module.define_function(func_id, ctx);
-        //     module.clear_context(ctx);
-
-        //     return func_id;
-        // } else {
+        // if self.body.is_empty() || matches!(self.fn_type, FunctionType::Extern) {
         //     let func_id = declare_external_function(
         //         &self.name,
         //         &format!("ext_{}", self.name),
-        //         // &self.name,
         //         ctx.func.signature.clone(),
         //         module,
         //         fbx,
@@ -1109,6 +990,126 @@ impl MsFunctionDeclaration {
 
         //     return func_id;
         // }
+
+        // let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
+
+        // let entry_block = builder.create_block();
+        // ms_ctx.scopes.new_scope(entry_block, MsClScopeType::Entry);
+
+        // builder.append_block_params_for_function_params(entry_block);
+        // builder.switch_to_block(entry_block);
+
+        // let values = builder.block_params(entry_block).to_vec();
+        // for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
+        //     let var = ms_ctx.new_variable();
+        //     let ty = variable.var_type.to_cl_type().expect("type can't be void");
+        //     let ms_var = MsVar::new(
+        //         variable.var_type.clone(),
+        //         var,
+        //         variable.var_type.to_string(),
+        //     );
+        //     ms_ctx
+        //         .scopes
+        //         .last_scope_mut()
+        //         .unwrap()
+        //         .variables
+        //         .registry
+        //         .insert(variable.name.as_str().into(), ms_var);
+
+        //     builder.declare_var(var, ty);
+        //     builder.def_var(var, value);
+        // }
+        // for expression in &self.body {
+        //     expression.translate(ms_ctx, &mut builder, module).unwrap();
+        // }
+
+        // while let Some(scope) = ms_ctx.scopes.exit_scope() {
+        //     if matches!(scope.scope_type, MsClScopeType::Entry) {
+        //         break;
+        //     }
+        // }
+
+        // builder.seal_all_blocks();
+        // builder.finalize();
+
+        // let func_id = module
+        //     .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
+        //     .unwrap();
+
+        // log::info!("Function Declared {} {}", self.name, func_id);
+
+        // module.define_function(func_id, ctx).unwrap();
+        // module.clear_context(ctx);
+
+        // return func_id;
+
+        // // if let Some(expressions) = &self.body {
+        // //     let mut builder = FunctionBuilder::new(&mut ctx.func, fbx);
+
+        // //     let entry_block = builder.create_block();
+
+        // //     builder.append_block_params_for_function_params(entry_block);
+        // //     builder.switch_to_block(entry_block);
+
+        // //     let values = builder.block_params(entry_block).to_vec();
+        // //     for (value, variable) in std::iter::zip(values, self.arguments.iter()) {
+        // //         let var = ms_ctx.new_variable();
+        // //         // variables.insert(variable.name.clone(), value);
+        // //         if let VariableType::Native(t) = variable.var_type {
+        // //             builder.try_declare_var(var, t).unwrap();
+        // //             builder.try_def_var(var, value).unwrap();
+        // //             ms_ctx.local_variables.insert(
+        // //                 variable.name.clone(),
+        // //                 CraneliftVariable {
+        // //                     var,
+        // //                     ms_var: variable.clone(),
+        // //                 },
+        // //             );
+        // //         } else if let VariableType::BuiltIn(t) = variable.var_type {
+        // //             let t = t.to_cranelift_type().unwrap();
+        // //             builder.try_declare_var(var, t).unwrap();
+        // //             builder.try_def_var(var, value).unwrap();
+        // //             ms_ctx.local_variables.insert(
+        // //                 variable.name.clone(),
+        // //                 CraneliftVariable {
+        // //                     var,
+        // //                     ms_var: variable.clone(),
+        // //                 },
+        // //             );
+        // //         } else {
+        // //             log::error!("Unsupported variable type {:?}", variable);
+        // //         }
+        // //     }
+        // //     for expression in expressions {
+        // //         expression.translate(ms_ctx, &mut builder, module);
+        // //     }
+        // //     builder.seal_all_blocks();
+        // //     builder.finalize();
+
+        // //     let func_id = module
+        // //         .declare_function(&self.name, Linkage::Preemptible, &ctx.func.signature)
+        // //         .unwrap();
+
+        // //     log::info!("Function Declared {} {}", self.name, func_id);
+
+        // //     module.define_function(func_id, ctx);
+        // //     module.clear_context(ctx);
+
+        // //     return func_id;
+        // // } else {
+        // //     let func_id = declare_external_function(
+        // //         &self.name,
+        // //         &format!("ext_{}", self.name),
+        // //         // &self.name,
+        // //         ctx.func.signature.clone(),
+        // //         module,
+        // //         fbx,
+        // //         ctx,
+        // //     )
+        // //     .unwrap();
+
+        // //     return func_id;
+        // // }
     }
 }
 // impl FunctionDeclaration {

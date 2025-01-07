@@ -11,7 +11,8 @@ use linear_map::LinearMap;
 use crate::{frontend::tokens::MsContext, native::instructions::Either};
 
 use super::{
-    types::{MsGenericTemplate, MsType},
+    functions::MsDeclaredFunction,
+    types::{MsGenericTemplate, MsType, MsTypeId, MsTypeWithId},
     variable::MsVal,
     MsRegistry,
 };
@@ -19,7 +20,7 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct MsStructFieldValue {
     pub offset: usize,
-    pub ty: MsType,
+    pub ty: MsTypeId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -41,9 +42,9 @@ impl MsStructType {
         }
     }
 
-    pub fn add_field(&mut self, field_name: impl Into<Box<str>>, field_type: MsType) {
-        let size = field_type.size();
-        let align = field_type.align();
+    pub fn add_field(&mut self, field_name: impl Into<Box<str>>, field_type: MsTypeWithId) {
+        let size = field_type.ty.size();
+        let align = field_type.ty.align();
 
         if self.size % align != 0 {
             self.size += align - (self.size % align);
@@ -53,7 +54,7 @@ impl MsStructType {
             field_name.into(),
             MsStructFieldValue {
                 offset: self.size,
-                ty: field_type,
+                ty: field_type.id,
             },
         );
         self.size += size;
@@ -78,12 +79,52 @@ impl MsStructType {
         for (k, v) in self.fields.iter() {
             let val = values.get(k).expect("Missing field on struct");
 
-            if !v.ty.equal(&val.ty) {
-                panic!("Types don match {:?} != {:?}", v.ty, val.ty);
+            if v.ty != val.ty_id {
+                panic!("Types don match {:?} != {:?}", v.ty, val.ty_id);
             }
             self.set_field(&ptr, &k, val, ms_ctx, fbx, module);
         }
     }
+
+    pub fn get_data(
+        &self,
+        ptr: MsVal,
+        field: &str,
+        ms_ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder<'_>,
+        module: &mut ObjectModule,
+    ) -> MsVal {
+        let field = self
+            .fields
+            .get(field)
+            .expect(&format!("undefined field name on {:?}", self));
+
+        let field_ty = ms_ctx
+            .current_module
+            .type_registry
+            .get_from_type_id(field.ty)
+            .unwrap();
+
+        let value = fbx.ins().load(
+            field_ty.to_cl_type().unwrap(),
+            MemFlags::new(),
+            ptr.value(),
+            field.offset as i32,
+        );
+
+        return MsVal::new(field.ty, value);
+    }
+
+    pub fn get_method(
+        ptr: MsVal,
+        field: &str,
+        ms_ctx: &mut MsContext,
+        fbx: &mut FunctionBuilder<'_>,
+        module: &mut ObjectModule,
+    ) -> Rc<MsDeclaredFunction> {
+        todo!()
+    }
+
     pub fn set_field(
         &self,
         ptr: &MsVal,
@@ -103,12 +144,12 @@ impl MsStructType {
     }
 }
 
-pub fn array_struct() -> MsStructType {
-    let mut st = MsStructType::default();
-    st.add_field("size", MsType::Native(super::types::MsNativeType::U64));
-    st.add_field("ptr", MsType::Native(super::types::MsNativeType::U64));
-    return st;
-}
+// pub fn array_struct() -> MsStructType {
+//     let mut st = MsStructType::default();
+//     st.add_field("size", MsType::Native(super::types::MsNativeType::U64));
+//     st.add_field("ptr", MsType::Native(super::types::MsNativeType::U64));
+//     return st;
+// }
 
 // pub fn pointer_template() -> MsGenericTemplate {
 //     let mut st = MsGenericTemplate::default();

@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{any::Any, ops::Deref};
 
 use cranelift::{
     codegen::ir::Inst,
@@ -70,7 +70,7 @@ pub fn drop_scope(
     for var_name in reg.stack.into_iter().rev() {
         let var = reg.registry.get(&var_name).unwrap();
         drop_variable(var, ctx, fbx, module);
-        log::info!("Dropped {} of type: {}", var_name, var.type_name());
+        log::info!("Dropped {} of type: {}", var_name, var.ty_id);
     }
 }
 
@@ -81,11 +81,11 @@ pub fn drop_variable(
     module: &mut ObjectModule,
 ) {
     let v = var;
-    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", v.type_name()) {
-        let function = drop_trait
-            .registry
-            .get("drop")
-            .expect(&format!("missing fn drop(self @mut Self); for {:?}", v.ty));
+    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", v.ty_id) {
+        let function = drop_trait.registry.get("drop").expect(&format!(
+            "missing fn drop(self @mut Self); for {:?}",
+            v.ty_id
+        ));
         let func_ref = module.declare_func_in_func(function.func_id, fbx.func);
         let val = fbx.use_var(v.c_var);
         let _ = fbx.ins().call(func_ref, &[val]);

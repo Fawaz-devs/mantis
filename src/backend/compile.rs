@@ -75,8 +75,7 @@ pub fn compile_binary(
                             ms_ctx
                                 .current_module
                                 .type_registry
-                                .registry
-                                .insert(alias.into(), resolved);
+                                .add_type(alias, resolved.ty);
                         } else {
                             log::warn!("found an undefined type, creating type");
                             todo!("add types to ms_context");

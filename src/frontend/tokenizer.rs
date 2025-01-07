@@ -680,63 +680,65 @@ pub fn parse_fn_ms_declared_arguments(
 }
 
 pub fn parse_struct_scope(tokens: &mut Lexer<MantisLexerTokens>, registry: &mut MsTypeRegistry) {
-    let Some(Ok(MantisLexerTokens::Word(name))) = tokens.next() else {
-        panic!("No name after struct declaration");
-    };
+    todo!();
 
-    let Some(Ok(MantisLexerTokens::BraceOpen)) = tokens.next() else {
-        panic!("Struct Declaration, No Brace Open");
-    };
+    // let Some(Ok(MantisLexerTokens::Word(name))) = tokens.next() else {
+    //     panic!("No name after struct declaration");
+    // };
 
-    // let mut builder = StructMapBuilder::new();
-    let mut ms_struct = MsStructType::default();
-    let mut next_is_variable = true;
-    let mut next_is_type = false;
+    // let Some(Ok(MantisLexerTokens::BraceOpen)) = tokens.next() else {
+    //     panic!("Struct Declaration, No Brace Open");
+    // };
 
-    let mut field: Option<(String, MsType)> = None;
+    // // let mut builder = StructMapBuilder::new();
+    // let mut ms_struct = MsStructType::default();
+    // let mut next_is_variable = true;
+    // let mut next_is_type = false;
 
-    while let Some(Ok(token)) = tokens.next() {
-        match token {
-            MantisLexerTokens::Word(field_name) => {
-                if next_is_variable {
-                    // field = Some((field_name, VariableType::BuiltIn(BuiltInType::I64)));
-                    field = Some((field_name, MsType::Native(MsNativeType::Void)));
-                    next_is_variable = false;
-                } else if next_is_type {
-                    let f = field.take().unwrap();
-                    let ty = registry
-                        .get_registry()
-                        .get(field_name.as_str())
-                        .expect("Undefined Type");
-                    ms_struct.add_field(f.0, ty.clone());
+    // let mut field: Option<(String, MsType)> = None;
 
-                    next_is_type = false;
-                }
-            }
-            MantisLexerTokens::Comma => {
-                next_is_variable = true;
-            }
-            MantisLexerTokens::Colon => {
-                next_is_type = true;
-            }
-            MantisLexerTokens::BraceClose => {
-                break;
-            }
+    // while let Some(Ok(token)) = tokens.next() {
+    //     match token {
+    //         MantisLexerTokens::Word(field_name) => {
+    //             if next_is_variable {
+    //                 // field = Some((field_name, VariableType::BuiltIn(BuiltInType::I64)));
+    //                 field = Some((field_name, MsType::Native(MsNativeType::Void)));
+    //                 next_is_variable = false;
+    //             } else if next_is_type {
+    //                 let f = field.take().unwrap();
+    //                 let ty = registry
+    //                     .get_registry()
+    //                     .get(field_name.as_str())
+    //                     .expect("Undefined Type");
+    //                 ms_struct.add_field(f.0, ty.clone());
 
-            _ => {
-                panic!(
-                    "Undefined token in struct declaration {:?} {:?}",
-                    token,
-                    tokens.slice()
-                );
-            }
-        }
-    }
+    //                 next_is_type = false;
+    //             }
+    //         }
+    //         MantisLexerTokens::Comma => {
+    //             next_is_variable = true;
+    //         }
+    //         MantisLexerTokens::Colon => {
+    //             next_is_type = true;
+    //         }
+    //         MantisLexerTokens::BraceClose => {
+    //             break;
+    //         }
+
+    //         _ => {
+    //             panic!(
+    //                 "Undefined token in struct declaration {:?} {:?}",
+    //                 token,
+    //                 tokens.slice()
+    //             );
+    //         }
+    //     }
+    // }
 
     // registry.add_struct(name, builder);
-    registry
-        .get_registry_mut()
-        .insert(name, MsType::Struct(Rc::new(ms_struct)));
+    // registry
+    //     .get_registry_mut()
+    //     .insert(name, MsType::Struct(Rc::new(ms_struct)));
 }
 
 pub fn format_lexer_state(lexer: &Lexer<MantisLexerTokens>) -> String {

@@ -2,73 +2,45 @@ use std::collections::HashMap;
 
 use cranelift::prelude::{FunctionBuilder, Value, Variable};
 
-use super::{types::MsType, MsRegistry, MsRegistryExt};
+use super::{
+    types::{MsType, MsTypeId},
+    MsRegistry, MsRegistryExt,
+};
 
 #[derive(Clone, Debug)]
 pub struct MsVar {
-    pub ty: MsType,
     pub c_var: Variable,
-    ty_name: Box<str>,
-    is_mutable: bool,
+    pub ty_id: MsTypeId,
+    pub is_mutable: bool,
 }
 
 impl MsVar {
-    pub fn new(ty: MsType, c_var: Variable, ty_name: impl Into<Box<str>>) -> Self {
+    pub fn new(ty_id: MsTypeId, c_var: Variable) -> Self {
         Self {
-            ty,
+            ty_id,
             c_var,
             is_mutable: false,
-            ty_name: ty_name.into(),
         }
     }
 
     pub fn value(&self, fbx: &mut FunctionBuilder) -> Value {
         fbx.use_var(self.c_var)
     }
-
-    pub fn mark_mutability(&mut self, mutable: bool) {
-        self.is_mutable = mutable;
-    }
-
-    pub fn is_mutable(&self) -> bool {
-        self.is_mutable
-    }
-
-    pub fn set_type_name(&mut self, ty_name: impl Into<Box<str>>) {
-        self.ty_name = ty_name.into()
-    }
-
-    pub fn type_name(&self) -> &str {
-        &self.ty_name
-    }
 }
 
 #[derive(Clone, Debug)]
 pub struct MsVal {
     pub value: Value,
-    pub ty: MsType,
-    ty_name: Box<str>,
+    pub ty_id: MsTypeId,
 }
 
 impl MsVal {
-    pub fn new(value: Value, ty: MsType, ty_name: impl Into<Box<str>>) -> Self {
-        Self {
-            value,
-            ty,
-            ty_name: ty_name.into(),
-        }
+    pub fn new(ty_id: MsTypeId, value: Value) -> Self {
+        Self { ty_id, value }
     }
 
     pub fn value(&self) -> Value {
         self.value
-    }
-
-    pub fn set_type_name(&mut self, ty_name: impl Into<Box<str>>) {
-        self.ty_name = ty_name.into()
-    }
-
-    pub fn type_name(&self) -> &str {
-        &self.ty_name
     }
 }
 
