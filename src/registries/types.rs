@@ -378,7 +378,7 @@ impl StructWithGenerics {
 
         let ty = MsType::Struct(Rc::new(struct_ty));
 
-        let ty_name = random_string(32);
+        let ty_name = random_string(20);
         let id = ms_module.type_registry.add_type(ty_name, ty.clone());
 
         return MsTypeWithId { ty, id };
@@ -548,7 +548,7 @@ impl Display for MsTypeId {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct MsTypeNameRegistry {
     map: HashMap<Box<str>, MsTypeId>, // map -> type_id
     inner: Vec<MsType>,
@@ -578,15 +578,30 @@ impl MsTypeNameRegistry {
 
     pub fn add_type(&mut self, ty_name: impl Into<Box<str>>, ty: MsType) -> MsTypeId {
         let idx = MsTypeId(self.inner.len());
-        if self.map.insert(ty_name.into(), idx).is_some() {
+        let ty_name: Box<str> = ty_name.into();
+
+        log::info!("Added Type {} -> {:?} with type_id {}", ty_name, ty, idx);
+        if self.map.insert(ty_name, idx).is_some() {
             panic!("A Type with that name already exists");
         }
+
         self.inner.push(ty);
         idx
     }
 
+    pub fn add_alias(&mut self, ty_name: impl Into<Box<str>>, ty_id: MsTypeId) {
+        let ty_name: Box<str> = ty_name.into();
+        log::info!("Added Alias {} -> with type_id {}", ty_name, ty_id);
+        if self.map.insert(ty_name, ty_id).is_some() {
+            panic!("Already a type_name exists");
+        }
+    }
+
     pub fn with_default_types() -> Self {
-        let mut registry = Self::default();
+        let mut registry = Self {
+            map: Default::default(),
+            inner: Default::default(),
+        };
 
         registry.add_type("i8", MsType::Native(MsNativeType::I8));
         registry.add_type("i16", MsType::Native(MsNativeType::I16));
@@ -599,6 +614,12 @@ impl MsTypeNameRegistry {
         registry.add_type("f64", MsType::Native(MsNativeType::F64));
 
         registry
+    }
+}
+
+impl Default for MsTypeNameRegistry {
+    fn default() -> Self {
+        Self::with_default_types()
     }
 }
 

@@ -3,6 +3,7 @@
 use std::{
     process::{ExitCode, ExitStatus},
     rc::Rc,
+    time::Instant,
 };
 
 use clap::Parser;
@@ -66,6 +67,7 @@ fn main() {
 
 fn init_logger() {
     use std::io::Write;
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
             let ts = buf.timestamp();
@@ -130,6 +132,8 @@ fn handle0(args: Args) {
                 assert!(
                     run_cmd("cc", [obj_file_path.as_str(), "-o", exe_file_path.as_str()]).success()
                 );
+
+                log::info!("executable created at {}", exe_file_path.as_str());
             } else if let Some(lib_file_path) = &args.lib {
                 let lib_type = if args.static_lib {
                     "-static"
@@ -153,7 +157,15 @@ fn handle0(args: Args) {
 
             if args.run {
                 if let Some(exe_file_path) = &args.exe {
-                    run_cmd(exe_file_path, args.run_args.iter());
+                    {
+                        let instant = Instant::now();
+                        let code = run_cmd(exe_file_path, args.run_args.iter()).code().unwrap();
+                        log::info!(
+                            "exited with {}, spent {:.4}s",
+                            code,
+                            instant.elapsed().as_secs_f64()
+                        );
+                    }
                 } else {
                     let mut exe_file_path =
                         std::path::PathBuf::from(args.cache).join(&args.module_name);
@@ -162,33 +174,22 @@ fn handle0(args: Args) {
                     assert!(
                         run_cmd("cc", [obj_file_path.as_str(), "-o", exe_file_path_str]).success()
                     );
-                    run_cmd(exe_file_path_str, args.run_args.iter());
+
+                    log::info!("executable created at {} and running", exe_file_path_str);
+
+                    {
+                        let instant = Instant::now();
+                        let code = run_cmd(exe_file_path_str, args.run_args.iter())
+                            .code()
+                            .unwrap();
+                        log::info!(
+                            "exited with {}, spent {:.4}s",
+                            code,
+                            instant.elapsed().as_secs_f64()
+                        );
+                    }
                 }
             }
-
-            // if cmd_args.len() > 1 {
-            //     log::info!("running cc {}", cmd_args.join(" "));
-            //     let mut child = std::process::Command::new("cc")
-            //         .args(&cmd_args)
-            //         .spawn()
-            //         .unwrap();
-            //     let exit_code = child.wait().unwrap();
-            //     log::info!("cc exit code: {}", exit_code);
-
-            //     if args.run && args.exe.is_some() && exit_code.success() {
-            //         let exe_path = cmd_args.last().unwrap(); // DON'T DO THIS
-            //         log::info!("running {} {}", exe_path, args.run_args.join(" "));
-
-            //         child = std::process::Command::new(exe_path)
-            //             .args(&args.run_args)
-            //             .spawn()
-            //             .unwrap();
-            //         let exit_code = child.wait().unwrap();
-            //         log::info!("exited with: {}", exit_code);
-            //     }
-            // } else {
-            //     if args.run {}
-            // }
         }
         #[cfg(not(target_os = "linux"))]
         {

@@ -27,8 +27,8 @@ pub struct MsFunctionType {
 
 #[derive(Clone, Debug)]
 pub struct MsDeclaredFunction {
-    pub arguments: LinearMap<WordSpan, mantis_expression::pratt::Type>, // var_name -> type
-    pub rets: mantis_expression::pratt::Type,
+    pub arguments: LinearMap<Box<str>, MsTypeId>, // var_name -> type
+    pub rets: Option<MsTypeId>,
     pub fn_type: FunctionType,
     pub func_id: FuncId,
 }
@@ -55,13 +55,25 @@ impl Default for MsFunctionRegistry {
     }
 }
 
+impl MsFunctionRegistry {
+    pub fn add_function(&mut self, name: impl Into<Box<str>>, decl: Rc<MsDeclaredFunction>) {
+        let fn_name: Box<str> = name.into();
+
+        log::info!("adding function to registry {}", fn_name);
+
+        if self.registry.insert(fn_name, decl).is_some() {
+            panic!("Function declared twice in same module");
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MsTraitRegistry {
     pub registry: HashMap<Box<str>, HashMap<MsTypeId, MsFunctionRegistry>>,
 }
 
 impl MsTraitRegistry {
-    pub(crate) fn find_trait_for(
+    pub fn find_trait_for(
         &self,
         trait_name: &str,
         type_id: MsTypeId,
@@ -70,6 +82,30 @@ impl MsTraitRegistry {
         let functions = trait_registry.get(&type_id)?;
 
         Some(functions)
+    }
+
+    pub fn add_function(
+        &mut self,
+        trait_name: &str,
+        type_id: MsTypeId,
+        func_name: Box<str>,
+        func_decl: Rc<MsDeclaredFunction>,
+    ) {
+        let registry = if let Some(types_to_fns) = self.registry.get_mut(trait_name) {
+            types_to_fns
+        } else {
+            self.registry.insert(trait_name.into(), Default::default());
+            self.registry.get_mut(trait_name).unwrap()
+        };
+
+        let registry = if let Some(fns) = registry.get_mut(&type_id) {
+            fns
+        } else {
+            registry.insert(type_id, Default::default());
+            registry.get_mut(&type_id).unwrap()
+        };
+
+        registry.add_function(func_name, func_decl);
     }
 }
 
@@ -87,4 +123,6 @@ pub struct MsFunctionTemplates {
 }
 
 #[derive(Default, Debug)]
-pub struct MsTraitTemplates {}
+pub struct MsTraitTemplates {
+    pub registry: HashMap<Box<str>, Vec<FunctionDecl>>,
+}

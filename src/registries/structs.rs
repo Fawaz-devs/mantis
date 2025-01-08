@@ -46,18 +46,29 @@ impl MsStructType {
         let size = field_type.ty.size();
         let align = field_type.ty.align();
 
-        if self.size % align != 0 {
-            self.size += align - (self.size % align);
-        }
+        let field_name: Box<str> = field_name.into();
+        log::info!(
+            "adding field {} of size {} and alignment {}",
+            field_name,
+            size,
+            align
+        );
+
+        // let mut padding = 0;
+        // if self.size % align != 0 {
+        //     let padding = align - (self.size % align);
+        //     log::info!("adding padding {} to current size {}", padding, self.size);
+        //     self.size += padding;
+        // }
 
         self.fields.insert(
-            field_name.into(),
+            field_name,
             MsStructFieldValue {
                 offset: self.size,
                 ty: field_type.id,
             },
         );
-        self.size += size;
+        self.size += align;
     }
 
     pub fn get_field(&self, field_name: &str) -> Option<&MsStructFieldValue> {
@@ -65,7 +76,7 @@ impl MsStructType {
     }
 
     pub fn to_abi_param(&self) -> AbiParam {
-        todo!()
+        AbiParam::new(types::I64)
     }
 
     pub fn set_data(
@@ -105,12 +116,16 @@ impl MsStructType {
             .get_from_type_id(field.ty)
             .unwrap();
 
-        let value = fbx.ins().load(
-            field_ty.to_cl_type().unwrap(),
-            MemFlags::new(),
-            ptr.value(),
-            field.offset as i32,
-        );
+        let value = match field_ty {
+            MsType::Native(nty) => fbx.ins().load(
+                field_ty.to_cl_type().unwrap(),
+                MemFlags::new(),
+                ptr.value(),
+                field.offset as i32,
+            ),
+            MsType::Struct(_sty) => fbx.ins().iadd_imm(ptr.value(), field.offset as i64),
+            MsType::Ref(ms_type, _) => todo!(),
+        };
 
         return MsVal::new(field.ty, value);
     }
@@ -135,12 +150,48 @@ impl MsStructType {
         module: &mut ObjectModule,
     ) {
         let field = self.get_field(field_name).unwrap();
-        fbx.ins().store(
-            MemFlags::new(),
-            value.value(),
-            ptr.value(),
-            field.offset as i32,
-        );
+
+        match ms_ctx
+            .current_module
+            .type_registry
+            .get_from_type_id(field.ty)
+            .unwrap()
+        {
+            MsType::Native(nty) => {
+                fbx.ins().store(
+                    MemFlags::new(),
+                    value.value(),
+                    ptr.value(),
+                    field.offset as i32,
+                );
+            }
+            MsType::Struct(struct_ty) => {
+                let dest = fbx.ins().iadd_imm(ptr.value(), field.offset as i64);
+                struct_ty.copy(dest, value.value(), fbx, module, ms_ctx);
+            }
+            MsType::Ref(ms_type, _) => todo!(),
+        }
+    }
+
+    pub fn copy(
+        &self,
+        dest: cranelift::prelude::Value,
+        src: cranelift::prelude::Value,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &MsContext,
+    ) {
+        let func_id = ms_ctx
+            .current_module
+            .fn_registry
+            .registry
+            .get("memcpy")
+            .unwrap()
+            .func_id;
+
+        let func_ref = module.declare_func_in_func(func_id, fbx.func);
+        let size = fbx.ins().iconst(types::I64, self.size() as i64);
+        fbx.ins().call(func_ref, &[dest, src, size]);
     }
 }
 

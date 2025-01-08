@@ -69,8 +69,10 @@ pub fn drop_scope(
 ) {
     for var_name in reg.stack.into_iter().rev() {
         let var = reg.registry.get(&var_name).unwrap();
-        drop_variable(var, ctx, fbx, module);
-        log::info!("Dropped {} of type: {}", var_name, var.ty_id);
+        if !var.is_reference {
+            drop_variable(var, ctx, fbx, module);
+            log::info!("Dropped {} of type: {}", var_name, var.ty_id);
+        }
     }
 }
 

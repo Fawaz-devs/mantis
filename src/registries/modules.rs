@@ -8,7 +8,11 @@ use std::{
 use linear_map::LinearMap;
 use mantis_expression::pratt::Type;
 
-use crate::{native::instructions::Either, registries::types::StructWithGenerics};
+use crate::{
+    backend::compile_function::random_string,
+    native::instructions::Either,
+    registries::{structs::MsStructType, types::StructWithGenerics},
+};
 
 use super::{
     functions::{
@@ -16,7 +20,7 @@ use super::{
         MsTraitTemplates,
     },
     types::{
-        MsGenericTemplate, MsType, MsTypeNameRegistry, MsTypeRegistry, MsTypeTemplates,
+        MsGenericTemplate, MsType, MsTypeId, MsTypeNameRegistry, MsTypeRegistry, MsTypeTemplates,
         MsTypeWithId, TypeNameWithGenerics,
     },
 };
@@ -32,17 +36,17 @@ pub struct MsModule {
     pub fn_templates: MsFunctionTemplates,
     pub trait_registry: MsTraitRegistry,
     pub trait_templates: MsTraitTemplates,
-    // pub type_registry: MsTypeRegistry,
     pub type_registry: MsTypeNameRegistry,
-
     pub type_templates: MsTypeTemplates,
     pub submodules: HashMap<Box<str>, MsModule>,
+    pub type_fn_registry: HashMap<MsTypeId, MsFunctionRegistry>,
 }
 
 #[derive(Debug, Clone)]
 pub enum MsResolved {
     Function(Rc<MsDeclaredFunction>),
     Type(MsTypeWithId),
+    TypeRef(MsTypeWithId, bool),
     Generic(Rc<MsGenericTemplate>),
 }
 
@@ -50,17 +54,26 @@ impl MsResolved {
     pub fn ty(&self) -> Option<MsTypeWithId> {
         match self {
             MsResolved::Type(ms_type) => Some(ms_type.clone()),
+            MsResolved::TypeRef(ms_type, _) => Some(ms_type.clone()),
             _ => None,
         }
+    }
+
+    pub fn is_reference(&self) -> bool {
+        matches!(self, MsResolved::TypeRef(_, __))
     }
 }
 
 impl MsModule {
-    pub fn resolve(&mut self, type_name: &Type) -> Option<MsResolved> {
-        let generic_key = type_name.to_string();
+    pub fn resolve(
+        &mut self,
+        type_name: &Type,
+        self_type: Option<MsTypeWithId>,
+    ) -> Option<MsResolved> {
         match type_name {
             Type::WithGenerics(ty, generics) => {
                 {
+                    let generic_key = type_name.to_string();
                     if let Some(ty) = self.type_registry.get_from_str(&generic_key) {
                         return Some(MsResolved::Type(ty.clone()));
                     }
@@ -77,30 +90,21 @@ impl MsModule {
                         let mut real_types = HashMap::<Box<str>, MsTypeWithId>::new();
 
                         for (generic_name, ty) in template.generics.iter().zip(generics.iter()) {
-                            if let Some(MsResolved::Type(real_ty)) = self.resolve(ty) {
+                            if let Some(MsResolved::Type(real_ty)) =
+                                self.resolve(ty, self_type.clone())
+                            {
                                 real_types.insert(generic_name.as_str().into(), real_ty);
                             }
                         }
 
                         let generated_type = template.generate(&real_types, self);
 
-                        // let ty_id = self
-                        //     .type_registry
-                        //     .add_type(generic_key, generated_type.clone());
-
-                        // let generated_type = MsTypeWithId {
-                        //     id: ty_id,
-                        //     ty: generated_type,
-                        // };
-
-                        // .registry
-                        // .insert(generic_key, generated_type.clone());
                         return Some(MsResolved::Type(generated_type));
                     }
                     if let Some(template) = self.fn_templates.registry.get(key.as_str()).cloned() {
                         let mut real_types = generics
                             .iter()
-                            .map(|x| self.resolve(x))
+                            .map(|x| self.resolve(x, self_type.clone()))
                             .collect::<Option<Vec<_>>>()?;
 
                         let generated_func = template.generate(real_types);
@@ -111,6 +115,12 @@ impl MsModule {
             }
             Type::Word(span) => {
                 let key = span.as_str();
+                if let Some(self_type) = self_type {
+                    if key == "Self" {
+                        return Some(MsResolved::Type(self_type));
+                    }
+                }
+
                 if let Some(ty) = self.type_registry.get_from_str(key) {
                     return Some(MsResolved::Type(ty.clone()));
                 }
@@ -120,15 +130,49 @@ impl MsModule {
                 return None;
             }
             Type::Nested(root, child) => {
+                if let Some(MsResolved::Type(ty)) = self.resolve(root, self_type.clone()) {
+                    let self_traits = self.trait_registry.registry.get("Self")?;
+                    let registry = self_traits.get(&ty.id)?;
+                    let func = registry.registry.get(child.word().unwrap())?;
+                    return Some(MsResolved::Function(func.clone()));
+                }
+
                 let key = root.to_string();
+
                 let module = self.submodules.get_mut(key.as_str())?;
-                return module.resolve(child);
+                return module.resolve(child, self_type);
             }
             Type::Struct { fields } => {
-                for (key, value) in fields {}
-                todo!()
+                let mut struct_ty = MsStructType::default();
+
+                for (key, value) in fields {
+                    let field_name = key.as_str();
+                    let Some(MsResolved::Type(field_ty)) = self.resolve(value, self_type.clone())
+                    else {
+                        panic!("undefined type {}: {:?}", field_name, value);
+                    };
+                    struct_ty.add_field(field_name, field_ty);
+                }
+
+                let struct_name = random_string(24);
+                let ty = MsType::Struct(Rc::new(struct_ty));
+                let id = self.type_registry.add_type(struct_name, ty.clone());
+
+                return Some(MsResolved::Type(MsTypeWithId { id, ty }));
             }
-            _ => unreachable!("unhandled"),
+
+            Type::Ref(ty, is_mutable) => {
+                // let ty = self.resolve(ty)?.ty()?;
+                // let cty = Type::WithGenerics(Type::Word("ptr".into()).into(), vec![*ty.clone()]);
+
+                let ty = self.resolve(ty, self_type)?.ty().unwrap();
+
+                let ty = MsResolved::TypeRef(ty, *is_mutable);
+
+                return Some(ty);
+            }
+
+            _ => unreachable!("unhandled {:?}", type_name),
         };
         return None;
     }

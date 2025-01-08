@@ -51,7 +51,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
 
       type_list = { type_name ~ ("," ~ type_name)* }
       typed_arg = { word ~ type_name }
-      typed_args_list = { typed_arg ~ ("," ~ typed_arg)* }
+      typed_args_list = { typed_arg ~ ("," ~ typed_arg)* ~ ","? }
       extern_word = { "extern" }
       fn_decl = { "fn" ~ type_name? ~ "(" ~ typed_args_list? ~ ")" ~ type_name? ~ (block | (extern_word ~ ";") | ";") }
       // cond_block = _{ if_block | elif_block | else_block }
@@ -78,8 +78,8 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       match_block = { "match" ~ expr ~ "{" ~ match_case+ ~ "}" }
       match_case = { expr ~ block }
 
-      single_assignment = { word ~ "=" ~ expr }
-      assignment_list = { single_assignment ~ ("," ~ single_assignment)* }
+      single_assignment = { word ~ ":" ~ expr }
+      assignment_list = { single_assignment ~ ("," ~ single_assignment)* ~ ","? }
       struct_initialization = { type_name ~ "{" ~ assignment_list ~ "}" }
       array_initialization = { "[" ~ expr_list ~ "]" }
 

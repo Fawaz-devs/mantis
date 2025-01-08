@@ -6,6 +6,7 @@ use std::{
 };
 
 use linear_map::LinearMap;
+use logos::Source;
 use pest::{
     iterators::{Pair, Pairs},
     pratt_parser::{Assoc, Op, PrattParser},
@@ -42,6 +43,48 @@ impl WordSpan {
 
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
+    }
+
+    pub fn highlight(&self) -> String {
+        use std::fmt::Write;
+
+        let mut buf = String::new();
+
+        let mut cursor = 0;
+        let threshold = 60;
+        let mut start_adding = false;
+        for (line_no, line) in self.content.lines().enumerate() {
+            if cursor + threshold > self.range.start {
+                start_adding = true;
+            }
+            if start_adding {
+                let red = "\x1B[31m";
+                let reset = "\x1B[0m";
+                if cursor + line.len() >= self.range.end && cursor <= self.range.start {
+                    let prev = &line[..self.range.start - cursor];
+                    let next =
+                        &line[(cursor + line.len() + self.range.len() - 1) - self.range.end..];
+                    write!(
+                        &mut buf,
+                        "{}: {} {red}{}{reset}{}\n",
+                        line_no,
+                        prev,
+                        self.as_str(),
+                        next
+                    )
+                    .unwrap();
+                } else {
+                    write!(&mut buf, "{}: {}\n", line_no, line).unwrap();
+                }
+            }
+            if cursor > self.range.end + threshold {
+                break;
+            }
+
+            cursor += line.len() + 1; // didn't account for \r\n
+        }
+
+        buf
     }
 }
 
@@ -195,13 +238,19 @@ impl Type {
                 }
                 s
             }
-            _ => todo!(),
+            _ => todo!("{:?}", self),
         }
     }
 
     pub fn word(&self) -> Option<&str> {
         match self {
             Type::Word(word_span) => Some(word_span.as_str()),
+            _ => todo!(),
+        }
+    }
+    pub fn word_highlight(&self) -> Option<String> {
+        match self {
+            Type::Word(word_span) => Some(word_span.highlight()),
             _ => todo!(),
         }
     }
@@ -500,9 +549,12 @@ fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
     // next = iter.next().unwrap();
 
     let args = if matches!(next.as_rule(), Rule::typed_args_list) {
-        let args = next;
-        next = iter.next().unwrap();
+        let args = next.clone();
+        if let Some(next_token) = iter.next() {
+            next = next_token;
+        }
         parse_typed_args(args, pratt, src)
+        // next = iter.next().unwrap();
     } else {
         LinearMap::new()
     };
@@ -511,7 +563,13 @@ fn parse_fn_decl(pair: Pair<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> 
     let mut is_extern = false;
     let return_ty = if matches!(next.as_rule(), Rule::type_name) {
         let ret_ty = next;
-        let ret_ty = parse_type(Pairs::single(ret_ty), pratt, src);
+        let mut ret_ty = parse_type(Pairs::single(ret_ty), pratt, src);
+
+        if let Some("extern") = ret_ty.word() {
+            is_extern = true;
+            ret_ty = Type::Unknown;
+        }
+
         if let Some(next_item) = iter.next() {
             next = next_item;
         } else {

@@ -12,14 +12,16 @@ pub struct MsVar {
     pub c_var: Variable,
     pub ty_id: MsTypeId,
     pub is_mutable: bool,
+    pub is_reference: bool,
 }
 
 impl MsVar {
-    pub fn new(ty_id: MsTypeId, c_var: Variable) -> Self {
+    pub fn new(ty_id: MsTypeId, c_var: Variable, is_mutable: bool, is_reference: bool) -> Self {
         Self {
             ty_id,
             c_var,
-            is_mutable: false,
+            is_mutable,
+            is_reference,
         }
     }
 

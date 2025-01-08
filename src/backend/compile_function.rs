@@ -1,7 +1,8 @@
 use crate::frontend::tokens::MsContext;
 use crate::native::instructions::NodeResult;
 use crate::registries::functions::{FunctionType, MsDeclaredFunction};
-use crate::registries::types::{MsNativeType, MsType, MsTypeWithId};
+use crate::registries::modules::MsResolved;
+use crate::registries::types::{MsNativeType, MsType, MsTypeId, MsTypeWithId};
 use crate::registries::variable::{MsVal, MsVar};
 use crate::registries::MsRegistryExt;
 use crate::scope::{drop_scope, drop_variable};
@@ -9,6 +10,7 @@ use codegen::ir::Inst;
 use cranelift::{codegen::Context, prelude::*};
 use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
+use linear_map::LinearMap;
 use logos::Source;
 use mantis_expression::node::BinaryOperation;
 use mantis_expression::pratt::{Block, ConditionalBlock, FunctionDecl, Node, Rule, Term, WordSpan};
@@ -24,30 +26,10 @@ pub enum FinalType {
     CraneliftType(types::Type),
 }
 
-// pub fn resolve_typename(ty: &MsTokenType) -> Box<str> {
-//     match ty {
-//         MsTokenType::Enum { fields } => todo!(),
-//         MsTokenType::Struct { fields } => todo!(),
-//         MsTokenType::WithGenerics(_, vec) => todo!(),
-//         MsTokenType::Nested(_, _) => todo!(),
-//         MsTokenType::Unknown => "unknown".into(),
-//         MsTokenType::Word(word_span) => word_span.as_str().into(),
-//         MsTokenType::Ref(ty, mutable) => {
-//             let mut s = String::with_capacity(512);
-//             s.push('@');
-//             if *mutable {
-//                 s.push_str(" mut ");
-//             }
-//             s.push_str(&resolve_typename(ty));
-
-//             s.into()
-//         }
-//     }
-// }
-
-// pub fn type_name_into_cranelift_type(ty_name: &str, ctx: &MsContext) -> Option<types::Type> {
-//     todo!()
-// }
+pub struct TraitFunctionFor<'a> {
+    pub trait_name: &'a str,
+    pub on_type: &'a MsTypeWithId,
+}
 
 pub fn compile_function(
     function: FunctionDecl,
@@ -55,6 +37,7 @@ pub fn compile_function(
     ctx: &mut Context,
     fbx: &mut FunctionBuilderContext,
     ms_ctx: &mut MsContext,
+    trait_on_type: Option<TraitFunctionFor>,
 ) {
     let name = function.name.word().unwrap();
     let mut linkage = Linkage::Preemptible;
@@ -66,25 +49,55 @@ pub fn compile_function(
         }
     }
 
-    for (_k, v) in &function.arguments {
-        let ty_name = v.word().unwrap();
-        let ty = ms_ctx
-            .type_registry
-            .get(&ty_name)
-            .expect(&format!("undefined type_name {}", ty_name));
+    let self_type = if let Some(trait_on_type) = &trait_on_type {
+        let ty = trait_on_type.on_type.clone();
+        Some(ty)
+    } else {
+        None
+    };
 
-        ctx.func.signature.params.push(ty.to_abi_param().unwrap());
-    }
-    {
+    let mut returns_struct = false;
+    let return_ty = {
         if !matches!(function.return_type, MsTokenType::Unknown) {
-            let ty_name = &function.return_type.word().unwrap();
             let ty = ms_ctx
-                .type_registry
-                .get(&ty_name)
-                .expect("invalid type_name");
+                .current_module
+                .resolve(&function.return_type, self_type.clone())
+                .expect(&format!("invalid type_name"))
+                .ty()
+                .unwrap();
 
-            ctx.func.signature.returns.push(ty.to_abi_param().unwrap());
+            match ty.ty {
+                MsType::Native(nty) => {
+                    ctx.func.signature.returns.push(nty.to_abi_param().unwrap());
+                }
+                MsType::Struct(struct_ty) => {
+                    returns_struct = true;
+                    ctx.func.signature.params.push(struct_ty.to_abi_param());
+                }
+                MsType::Ref(ms_type, _) => todo!(),
+            };
+
+            Some(ty.id)
+        } else {
+            None
         }
+    };
+
+    let mut fn_arguments = LinearMap::<Box<str>, MsTypeId>::with_capacity(function.arguments.len());
+    for (k, v) in &function.arguments {
+        let ty = ms_ctx
+            .current_module
+            .resolve(v, self_type.clone())
+            .unwrap()
+            .ty()
+            .unwrap();
+
+        ctx.func
+            .signature
+            .params
+            .push(ty.ty.to_abi_param().unwrap());
+
+        fn_arguments.insert(k.as_str().into(), ty.id);
     }
 
     let func_id = module
@@ -93,22 +106,33 @@ pub fn compile_function(
 
     let declared_function = Rc::new(MsDeclaredFunction {
         func_id,
-        arguments: function.arguments,
-        rets: function.return_type,
+        arguments: fn_arguments,
+        rets: return_ty,
         fn_type: if function.is_extern {
             FunctionType::Extern
         } else {
             FunctionType::Public
         },
     });
-    if ms_ctx
+    ms_ctx
         .current_module
         .fn_registry
-        .registry
-        .insert(name.into(), declared_function.clone())
-        .is_some()
-    {
-        panic!("Function declared twice in same module");
+        .add_function(name, declared_function.clone());
+
+    if let Some(tot) = &trait_on_type {
+        // log::info!(
+        //     "Adding function {} on trait {} on {}",
+        //     name,
+        //     tot.trait_name,
+        //     tot.on_type.id
+        // );
+
+        ms_ctx.current_module.trait_registry.add_function(
+            tot.trait_name,
+            tot.on_type.id.clone(),
+            name.into(),
+            declared_function.clone(),
+        );
     }
 
     if matches!(function.block, Block::Empty) {
@@ -123,30 +147,54 @@ pub fn compile_function(
     f.switch_to_block(entry_block);
 
     let block_params = f.block_params(entry_block).to_vec();
-    for ((arg_name, arg_type), value) in declared_function.arguments.iter().zip(block_params.iter())
-    {
-        let var = ms_ctx.new_variable();
-        let ty_name = arg_type.word().unwrap();
+
+    let mut fn_args_iter = block_params.iter();
+    if returns_struct {
+        let return_ty_id = return_ty.unwrap();
         let ty = ms_ctx
             .current_module
             .type_registry
-            .get_from_str(&ty_name)
-            .expect("invalid type_name")
-            .clone();
-
-        f.declare_var(var, ty.ty.to_cl_type().unwrap());
+            .get_from_type_id(return_ty_id)
+            .expect(&format!("invalid type_name"));
+        let var = ms_ctx.new_variable();
+        f.declare_var(var, ty.to_cl_type().unwrap());
+        let value = fn_args_iter.next().unwrap();
         f.def_var(var, *value);
         ms_ctx
             .var_scopes
-            .add_variable(arg_name.deref(), MsVar::new(ty.id, var));
+            .add_variable("return", MsVar::new(return_ty_id, var, true, true));
+    }
+
+    for ((arg_name, arg_type), value) in declared_function.arguments.iter().zip(fn_args_iter) {
+        let var = ms_ctx.new_variable();
+        let ty = ms_ctx
+            .current_module
+            .type_registry
+            .get_from_type_id(arg_type.clone())
+            .expect("invalid type_name");
+
+        f.declare_var(var, ty.to_cl_type().unwrap());
+        f.def_var(var, *value);
+        ms_ctx.var_scopes.add_variable(
+            arg_name.deref(),
+            MsVar::new(arg_type.clone(), var, true, true), // ignoring mutability
+        );
     }
 
     {
-        compile_block(&function.block, module, &mut f, ms_ctx);
-        let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-        drop_scope(scope, ms_ctx, &mut f, module);
+        if compile_block(&function.block, module, &mut f, ms_ctx).is_none() {
+            let scope = ms_ctx.var_scopes.exit_scope().unwrap();
+            drop_scope(scope, ms_ctx, &mut f, module);
+            f.ins().return_(&[]);
+        }
     }
     f.seal_block(entry_block);
+
+    let mut ir = String::new();
+    codegen::write_function(&mut ir, &f.func).unwrap();
+
+    // log::info!("IR:\n{ir}");
+
     f.finalize();
     module.define_function(func_id, ctx).unwrap();
     ctx.clear();
@@ -167,9 +215,12 @@ pub fn compile_block(
         }
         Block::Statements(stmts) => return compile_statements(&stmts, module, fbx, ms_ctx),
         Block::Continuos(blocks) => {
+            let mut last_inst = None;
             for block in blocks {
-                compile_block(block, module, fbx, ms_ctx);
+                last_inst = compile_block(block, module, fbx, ms_ctx);
             }
+
+            return last_inst;
         }
         Block::IfElseChain(if_else_chain) => {
             compile_if_else_chain(&if_else_chain, fbx, module, ms_ctx);
@@ -247,12 +298,53 @@ pub fn compile_assignment(
 
     assert!(variable.ty_id == rhs.ty());
 
-    // let _ = variable
-    //     .ty
-    //     .native()
-    //     .expect("only native types can be assigned right now");
-    let value = rhs.value(fbx);
-    fbx.def_var(variable.c_var, value);
+    let ty = ms_ctx
+        .current_module
+        .type_registry
+        .get_from_type_id(variable.ty_id)
+        .unwrap();
+    match ty {
+        MsType::Native(_) => {
+            let value = rhs.value(fbx);
+            fbx.def_var(variable.c_var, value);
+        }
+        MsType::Struct(sty) => {
+            // TODO: drop the old struct
+            drop_variable(variable, ms_ctx, fbx, module);
+
+            let dest = variable.value(fbx);
+            let src = rhs.value(fbx);
+            sty.copy(dest, src, fbx, module, ms_ctx);
+        }
+        MsType::Ref(ms_type, _) => todo!(),
+    }
+}
+
+pub fn compile_assignment_on_pointers(
+    lhs: NodeResult,
+    rhs: NodeResult,
+    module: &mut ObjectModule,
+    fbx: &mut FunctionBuilder,
+    ms_ctx: &mut MsContext,
+) {
+    let ty = ms_ctx
+        .current_module
+        .type_registry
+        .get_from_type_id(lhs.ty())
+        .unwrap();
+    match ty {
+        MsType::Native(nty) => {
+            let value = rhs.value(fbx);
+            let ptr = lhs.value(fbx);
+            fbx.ins().store(MemFlags::new(), value, ptr, 0);
+        }
+        MsType::Struct(sty) => {
+            let dest = lhs.value(fbx);
+            let src = rhs.value(fbx);
+            sty.copy(dest, src, fbx, module, ms_ctx);
+        }
+        MsType::Ref(ms_type, _) => todo!(),
+    }
 }
 
 pub fn compile_cast(
@@ -278,6 +370,56 @@ pub fn compile_cast(
         }
         _ => unimplemented!("only native types are castable"),
     }
+}
+
+pub fn compile_nested_struct_field_to_ptr(
+    root_struct_ptr: Value,
+    root_struct_ty: MsTypeId,
+    child: &MsTokenType,
+    ms_ctx: &mut MsContext,
+    fbx: &mut FunctionBuilder,
+) -> NodeResult {
+    let Some(MsType::Struct(struct_ty)) = ms_ctx
+        .current_module
+        .type_registry
+        .get_from_type_id(root_struct_ty)
+    else {
+        panic!("didn't find struct of type {}", root_struct_ty);
+    };
+
+    match child {
+        MsTokenType::Word(field_name) => {
+            // let ty = root_struct_ty.struct_ty().unwrap();
+            let ty = struct_ty;
+            let field = ty.get_field(&field_name).expect(&format!(
+                "no field with name {} on {:?}",
+                field_name.as_str(),
+                root_struct_ty
+            ));
+            let value = fbx.ins().iadd_imm(root_struct_ptr, field.offset as i64);
+            return NodeResult::Val(MsVal::new(field.ty, value));
+        }
+        MsTokenType::Nested(field_name, child) => {
+            let ty = struct_ty;
+            // let ty = root_struct_ty.struct_ty().unwrap();
+            let field_name = field_name.word().unwrap();
+            let field = ty.get_field(&field_name).expect(&format!(
+                "no field with name {} on {:?}",
+                field_name, root_struct_ty
+            ));
+            let value = fbx.ins().iadd_imm(root_struct_ptr, field.offset as i64);
+            // let ty = ms_ctx
+            //     .current_module
+            //     .type_registry
+            //     .get_from_type_id(field.ty)
+            //     .unwrap();
+
+            return compile_nested_struct_field_to_ptr(value, field.ty, child, ms_ctx, fbx);
+        }
+        _ => unreachable!(),
+    }
+
+    todo!()
 }
 
 pub fn compile_node(
@@ -306,12 +448,32 @@ pub fn compile_node(
             } else if matches!(rule, Rule::assign) {
                 // TODO: Check for enum unwrapping
 
-                let variable_name = match lhs.deref() {
-                    Node::Term(Term::Type(term)) => term.word().unwrap(),
-                    _ => unreachable!("{:?}", lhs),
-                };
                 let rhs = compile_node(rhs, module, fbx, ms_ctx).unwrap();
-                compile_assignment(&variable_name, rhs, module, fbx, ms_ctx);
+                match lhs.deref() {
+                    Node::Term(Term::Type(term)) => {
+                        match term {
+                            MsTokenType::Word(word_span) => {
+                                let variable_name = term.word().unwrap();
+                                compile_assignment(&variable_name, rhs, module, fbx, ms_ctx);
+                            }
+                            MsTokenType::Nested(root, child) => {
+                                let variable_name = root.word().unwrap();
+                                let var = ms_ctx.var_scopes.find_variable(variable_name).unwrap();
+                                let ptr = var.value(fbx);
+
+                                let final_ptr = compile_nested_struct_field_to_ptr(
+                                    ptr, var.ty_id, child, ms_ctx, fbx,
+                                );
+                                compile_assignment_on_pointers(final_ptr, rhs, module, fbx, ms_ctx);
+                            }
+                            _ => unreachable!(),
+                        };
+                    }
+                    _ => {
+                        let lhs = compile_node(lhs, module, fbx, ms_ctx).unwrap();
+                        compile_assignment_on_pointers(lhs, rhs, module, fbx, ms_ctx);
+                    }
+                };
                 return None;
             } else {
                 let lhs = compile_node(lhs, module, fbx, ms_ctx).unwrap();
@@ -325,8 +487,10 @@ pub fn compile_node(
                     .get_from_type_id(lhs.ty())
                     .unwrap();
 
-                let MsType::Native(nty) = ty else {
-                    panic!("only native types are supported for this binary operation");
+                let nty = if let MsType::Native(nty) = ty {
+                    nty
+                } else {
+                    MsNativeType::I64
                 };
                 let lval = lhs.value(fbx);
                 let rval = rhs.value(fbx);
@@ -360,7 +524,8 @@ pub fn compile_node(
                         return Some(NodeResult::Val(MsVal::new(node.ty(), val)));
                     }
                     MsType::Struct(struct_ty) => {
-                        todo!()
+                        return Some(NodeResult::Val(MsVal::new(node.ty(), ptr_value)));
+                        // todo!()
                     }
                     _ => todo!(),
                 };
@@ -376,268 +541,373 @@ pub fn compile_node(
                 unreachable!("other node types not supported FnCall");
             };
 
-            let fn_name = fn_name.word().unwrap();
-            let func = ms_ctx
-                .current_module
-                .fn_registry
-                .registry
-                .get(fn_name)
-                .expect(&format!("undefined function {fn_name}"))
-                .clone();
-            let func_ref = module.declare_func_in_func(func.func_id, fbx.func);
-            let mut call_arg_values = Vec::with_capacity(args.len());
-            for arg in args {
-                let val = compile_node(arg, module, fbx, ms_ctx).unwrap().value(fbx);
-                call_arg_values.push(val);
-            }
-            let inst = fbx.ins().call(func_ref, &call_arg_values);
-            let result = fbx.inst_results(inst);
-
-            if !matches!(func.rets, MsTokenType::Unknown) && !result.is_empty() {
-                let return_value = result[0];
-                //     !void
-                let ty_name = func.rets.word().unwrap();
-                let ty = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str(&ty_name)
-                    .expect(&format!("undefined type {ty_name}"))
-                    .clone();
-
-                return Some(NodeResult::Val(MsVal::new(ty.id, return_value)));
-            }
-        }
-        Node::Term(term) => match term {
-            Term::Array(vec) => todo!(),
-            Term::Function(function_decl) => todo!(),
-            Term::String(word_span) => {
-                let string_literal = word_span.as_str();
-                let string_literal = &string_literal[1..string_literal.len() - 1];
-                let mut s = String::new();
-                let mut is_escaping = false;
-                for c in string_literal.chars() {
-                    if c == '\\' {
-                        is_escaping = true;
-                    } else {
-                        if is_escaping {
-                            let c = match c {
-                                'n' => '\n',
-                                't' => '\t',
-                                'r' => '\r',
-                                '\\' => '\\',
-                                _ => panic!("unhandled escape sequence"),
-                            };
-                            s.push(c);
-                            is_escaping = false;
-                        } else {
-                            s.push(c);
-                        }
-                    }
-                }
-
-                let content = s;
-
-                let mut data_name = String::with_capacity(32);
-                {
-                    let range = word_span.range();
-                    random_string_into(20, &mut data_name);
-                    write!(&mut data_name, "_{}_{}", range.start, range.end).unwrap();
-                }
-
-                let ty = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str("StrSlice")
-                    .unwrap();
-                let MsType::Struct(sty) = ty.ty else {
-                    panic!("expected struct");
-                };
-                // str len: 8 + ptr: 8
-                let stack_slot = fbx.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    sty.size() as u32,
-                ));
-                let size_of_data = fbx.ins().iconst(types::I64, content.len() as i64);
-
-                let ty_i64 = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str("i64")
-                    .unwrap();
-
-                let struct_ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
-
-                let data_ptr = if content.is_empty() {
-                    fbx.ins().iconst(ty_i64.ty.to_cl_type().unwrap(), 0)
-                } else {
-                    let data_id = module
-                        .declare_data(&data_name, Linkage::Preemptible, false, false)
-                        .unwrap();
-                    let mut data_desc = DataDescription::new();
-                    data_desc.define(content.as_bytes().into());
-                    module.define_data(data_id, &data_desc).unwrap();
-                    let gl_value = module.declare_data_in_func(data_id, fbx.func);
-                    fbx.ins()
-                        .global_value(ty_i64.ty.to_cl_type().unwrap(), gl_value)
-                };
-
-                sty.set_field(
-                    &MsVal::new(ty_i64.id, struct_ptr),
-                    "len",
-                    &MsVal::new(ty_i64.id, size_of_data),
-                    ms_ctx,
-                    fbx,
-                    module,
-                );
-                sty.set_field(
-                    &MsVal::new(ty_i64.id, struct_ptr),
-                    "pointer",
-                    &MsVal::new(ty_i64.id, size_of_data),
-                    ms_ctx,
-                    fbx,
-                    module,
-                );
-
-                let mut val = MsVal::new(ty.id, struct_ptr);
-
-                return Some(NodeResult::Val(val));
-
-                // fbx.ins().stack_store(size_of_data, stack_slot, 0);
-                // fbx.ins().stack_store(ptr, stack_slot, 8);
-                // let val = fbx.ins().stack_addr(types::I64, stack_slot, 0);
-
-                // let ty = MsType::Ref(ty.into(), false);
-                // return Some(NodeResult::Val(MsVal::new(val, ty)));
-                todo!();
-            }
-            Term::Type(type_name) => match type_name {
-                MsTokenType::Word(word_span) => {
-                    let var_name = word_span.as_str();
-                    if let Some(var) = ms_ctx.var_scopes.find_variable(&var_name) {
-                        return Some(NodeResult::Var(var.clone()));
-                    } else {
-                        panic!("undefined {} word or type name in current scope", var_name);
-                    }
-                }
+            let mut method_on_variable: Option<MsVar> = None;
+            let func = match fn_name.clone() {
                 MsTokenType::Nested(root, child) => {
-                    let var_name = root.word().unwrap();
-                    if let Some(var) = ms_ctx.var_scopes.find_variable(&var_name).cloned() {
-                        let var_ty = ms_ctx
+                    let either_var_or_ty_name = root.word().unwrap();
+                    if let Some(var) = ms_ctx
+                        .var_scopes
+                        .find_variable(either_var_or_ty_name)
+                        .cloned()
+                    {
+                        let method_name = child.word().unwrap();
+
+                        let func = ms_ctx
                             .current_module
-                            .type_registry
-                            .get_from_type_id(var.ty_id)
+                            .trait_registry
+                            .registry
+                            .get("Self")
+                            .unwrap()
+                            .get(&var.ty_id)
+                            .unwrap()
+                            .registry
+                            .get(method_name)
                             .unwrap();
 
-                        if let MsType::Struct(struct_ty) = &var_ty {
-                            let field_name = child.word().unwrap();
-                            let field = struct_ty
-                                .get_field(field_name)
-                                .expect(&format!("unknown field in struct {}", field_name));
+                        method_on_variable = Some(var.clone());
 
-                            let ptr = fbx.use_var(var.c_var);
-
-                            let ptr = MsVal::new(var.ty_id, ptr);
-
-                            let val = struct_ty.get_data(ptr, field_name, ms_ctx, fbx, module);
-
-                            return Some(NodeResult::Val(val));
-
-                            // let value = fbx.ins().load(
-                            //     field.ty.to_cl_type().unwrap(),
-                            //     MemFlags::new(),
-                            //     ptr,
-                            //     field.offset as i32,
-                            // );
-
-                            // return Some(NodeResult::Val(MsVal::new(
-                            //     value,
-                            //     field.ty.clone(),
-                            //     field.ty.to_string(),
-                            // )));
-                        } else {
-                            panic!("Not a struct type, method calls not implemented yet");
-                        }
-
-                        return Some(NodeResult::Var(var.clone()));
+                        func.clone()
+                        // let var_ty = ms_ctx.current_module.type_registry.get_from_type_id(var.ty_id).unwrap();
                     } else {
-                        log::warn!(
-                            "Didn't find a variable with {}, should resolve types",
-                            var_name
-                        );
-                        panic!("undefined {} word or type name in current scope", var_name);
+                        let Some(MsResolved::Function(func)) =
+                            ms_ctx.current_module.resolve(fn_name, None)
+                        else {
+                            panic!("couldn't find function {:?}", fn_name);
+                        };
+
+                        func
                     }
                 }
-                MsTokenType::Ref(_, _) => todo!(),
-                _ => todo!(),
-            },
-            Term::I64(val) => {
-                let ty = ms_ctx
+                _ => {
+                    let Some(MsResolved::Function(func)) =
+                        ms_ctx.current_module.resolve(fn_name, None)
+                    else {
+                        panic!("couldn't find function {:?}", fn_name);
+                    };
+
+                    func
+                }
+            };
+
+            let mut call_arg_values = Vec::with_capacity(args.len());
+            if let Some(fn_ret_ty) = func.rets {
+                let return_ty = ms_ctx
                     .current_module
                     .type_registry
-                    .get_from_str("i64")
+                    .get_from_type_id(fn_ret_ty)
                     .unwrap();
 
-                let cty = ty.ty.to_cl_type().unwrap();
-                let val = fbx.ins().iconst(cty, *val);
-                return Some(NodeResult::Val(MsVal::new(ty.id, val)));
+                let mut returns_a_struct_ptr: Option<Value> = None;
+                match return_ty {
+                    MsType::Native(nty) => {}
+                    MsType::Struct(sty) => {
+                        let stackslot = fbx.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            sty.size() as u32,
+                        ));
+                        let ptr = fbx.ins().stack_addr(types::I64, stackslot, 0);
+                        call_arg_values.push(ptr);
+
+                        returns_a_struct_ptr = Some(ptr);
+                    }
+                    MsType::Ref(ms_type, _) => todo!(),
+                }
+
+                if let Some(var) = method_on_variable {
+                    call_arg_values.push(var.value(fbx));
+                }
+
+                for arg in args {
+                    let val = compile_node(arg, module, fbx, ms_ctx).unwrap().value(fbx);
+                    call_arg_values.push(val);
+                }
+
+                let func_ref = module.declare_func_in_func(func.func_id, fbx.func);
+                log::info!("calling a function {:?}", node);
+                let inst = fbx.ins().call(func_ref, &call_arg_values);
+                let result = fbx.inst_results(inst);
+
+                if !result.is_empty() {
+                    let return_value = result[0];
+                    return Some(NodeResult::Val(MsVal::new(fn_ret_ty, return_value)));
+                } else {
+                    if let Some(ptr) = returns_a_struct_ptr {
+                        return Some(NodeResult::Val(MsVal::new(fn_ret_ty, ptr)));
+                    }
+                }
+            } else {
+                if let Some(var) = method_on_variable {
+                    call_arg_values.push(var.value(fbx));
+                }
+
+                for arg in args {
+                    let val = compile_node(arg, module, fbx, ms_ctx).unwrap().value(fbx);
+                    call_arg_values.push(val);
+                }
+
+                let func_ref = module.declare_func_in_func(func.func_id, fbx.func);
+                log::info!("calling a function {:?}", node);
+                let _inst = fbx.ins().call(func_ref, &call_arg_values);
+                // let result = fbx.inst_results(inst);
             }
-            Term::F64(val) => {
-                let ty = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str("f64")
-                    .unwrap();
-                let cty = ty.ty.to_cl_type().unwrap();
-                let val = fbx.ins().f64const(*val);
-                return Some(NodeResult::Val(MsVal::new(ty.id, val)));
-            }
-            Term::Char(c) => {
-                let c = *c as i32; // utf8
-                let ty = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str("char")
-                    .unwrap();
-                let cty = ty.ty.to_cl_type().unwrap();
-                let val = fbx.ins().iconst(cty, c as i64);
-                return Some(NodeResult::Val(MsVal::new(ty.id, val)));
+        }
+        Node::Term(term) => {
+            match term {
+                Term::Array(vec) => todo!(),
+                Term::Function(function_decl) => todo!(),
+                Term::String(word_span) => {
+                    let string_literal = word_span.as_str();
+                    let string_literal = &string_literal[1..string_literal.len() - 1];
+                    let mut s = String::new();
+                    let mut is_escaping = false;
+                    for c in string_literal.chars() {
+                        if c == '\\' {
+                            is_escaping = true;
+                        } else {
+                            if is_escaping {
+                                let c = match c {
+                                    'n' => '\n',
+                                    't' => '\t',
+                                    'r' => '\r',
+                                    '\\' => '\\',
+                                    _ => panic!("unhandled escape sequence"),
+                                };
+                                s.push(c);
+                                is_escaping = false;
+                            } else {
+                                s.push(c);
+                            }
+                        }
+                    }
 
-                // let ty = MsType::Native(MsNativeType::Char);
-                // let cty = ty.to_cl_type().unwrap();
-                // let val = fbx.ins().iconst(cty, c as i64);
-                // return Some(NodeResult::Val(MsVal::new(val, ty, "char")));
-            }
-            Term::Struct(ty, linear_map) => {
-                let ty_name = ty.word().unwrap();
-                let ty = ms_ctx
-                    .current_module
-                    .type_registry
-                    .get_from_str(ty_name)
-                    .unwrap();
+                    let content = s;
 
-                let MsType::Struct(struct_type) = ty.ty else {
-                    panic!("undefined struct {}", ty_name);
-                };
+                    let mut data_name = String::with_capacity(32);
+                    {
+                        let range = word_span.range();
+                        random_string_into(20, &mut data_name);
+                        write!(&mut data_name, "_{}_{}", range.start, range.end).unwrap();
+                    }
 
-                let stack_slot = fbx.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    struct_type.size() as u32,
-                ));
-                let ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("StrSlice")
+                        .unwrap();
+                    let MsType::Struct(sty) = ty.ty else {
+                        panic!("expected struct");
+                    };
+                    // str len: 8 + ptr: 8
+                    let stack_slot = fbx.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        sty.size() as u32,
+                    ));
+                    let size_of_data = fbx.ins().iconst(types::I64, content.len() as i64);
 
-                let ptr = MsVal::new(ty.id, ptr);
-                for (k, v) in linear_map {
-                    let val = compile_node(v, module, fbx, ms_ctx).unwrap().to_ms_val(fbx);
-                    struct_type.set_field(&ptr, k, &val, ms_ctx, fbx, module);
+                    let ty_i64 = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("i64")
+                        .unwrap();
+
+                    let struct_ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
+
+                    let data_ptr = if content.is_empty() {
+                        fbx.ins().iconst(ty_i64.ty.to_cl_type().unwrap(), 0)
+                    } else {
+                        let data_id = module
+                            .declare_data(&data_name, Linkage::Preemptible, false, false)
+                            .unwrap();
+                        let mut data_desc = DataDescription::new();
+                        data_desc.define(content.as_bytes().into());
+                        module.define_data(data_id, &data_desc).unwrap();
+                        let gl_value = module.declare_data_in_func(data_id, fbx.func);
+                        fbx.ins()
+                            .global_value(ty_i64.ty.to_cl_type().unwrap(), gl_value)
+                    };
+
+                    sty.set_field(
+                        &MsVal::new(ty_i64.id, struct_ptr),
+                        "len",
+                        &MsVal::new(ty_i64.id, size_of_data),
+                        ms_ctx,
+                        fbx,
+                        module,
+                    );
+                    sty.set_field(
+                        &MsVal::new(ty_i64.id, struct_ptr),
+                        "pointer",
+                        &MsVal::new(ty_i64.id, data_ptr),
+                        ms_ctx,
+                        fbx,
+                        module,
+                    );
+
+                    let mut val = MsVal::new(ty.id, struct_ptr);
+
+                    return Some(NodeResult::Val(val));
+                }
+                Term::Type(type_name) => match type_name {
+                    MsTokenType::Word(word_span) => {
+                        let var_name = word_span.as_str();
+                        if let Some(var) = ms_ctx.var_scopes.find_variable(&var_name) {
+                            return Some(NodeResult::Var(var.clone()));
+                        } else {
+                            panic!(
+                                "undefined {} word or type name in current scope\n{}",
+                                var_name,
+                                word_span.highlight()
+                            );
+                        }
+                    }
+                    MsTokenType::Nested(root, child) => {
+                        let var_name = root.word().unwrap();
+                        if let Some(var) = ms_ctx.var_scopes.find_variable(&var_name).cloned() {
+                            let var = NodeResult::Var(var);
+                            return Some(compile_nested_struct_access(
+                                var, child, ms_ctx, fbx, module,
+                            ));
+                        } else {
+                            log::warn!(
+                                "Didn't find a variable with {}, should resolve types",
+                                var_name
+                            );
+                            // compile_nested_struct_field_to_ptr(, , , , )
+
+                            panic!(
+                                "undefined {} word or type name in current scope\n{}",
+                                var_name,
+                                root.word_highlight().unwrap()
+                            );
+                        }
+                    }
+                    _ => todo!(),
+                },
+                Term::I64(val) => {
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("i64")
+                        .unwrap();
+
+                    let cty = ty.ty.to_cl_type().unwrap();
+                    let val = fbx.ins().iconst(cty, *val);
+                    return Some(NodeResult::Val(MsVal::new(ty.id, val)));
+                }
+                Term::F64(val) => {
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("f64")
+                        .unwrap();
+                    let cty = ty.ty.to_cl_type().unwrap();
+                    let val = fbx.ins().f64const(*val);
+                    return Some(NodeResult::Val(MsVal::new(ty.id, val)));
+                }
+                Term::Char(c) => {
+                    let c = *c as i32; // utf8
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("char")
+                        .unwrap();
+                    let cty = ty.ty.to_cl_type().unwrap();
+                    let val = fbx.ins().iconst(cty, c as i64);
+                    return Some(NodeResult::Val(MsVal::new(ty.id, val)));
+                }
+                Term::Struct(ty, linear_map) => {
+                    let ty_name = ty.word().unwrap();
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str(ty_name)
+                        .unwrap();
+
+                    let MsType::Struct(struct_type) = ty.ty else {
+                        panic!("undefined struct {}", ty_name);
+                    };
+
+                    let stack_slot = fbx.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        struct_type.size() as u32,
+                    ));
+                    let ptr = fbx.ins().stack_addr(types::I64, stack_slot, 0);
+
+                    let ptr = MsVal::new(ty.id, ptr);
+                    for (k, v) in linear_map {
+                        let val = compile_node(v, module, fbx, ms_ctx);
+                        let val = val.unwrap();
+                        let val = val.to_ms_val(fbx);
+                        struct_type.set_field(&ptr, k, &val, ms_ctx, fbx, module);
+                    }
+
+                    return Some(NodeResult::Val(ptr));
                 }
             }
-        },
+        }
         Node::None => {
             fbx.ins().nop();
         }
     }
 
     return None;
+}
+
+pub fn compile_nested_struct_access(
+    root: NodeResult,
+    child: &MsTokenType,
+    ms_ctx: &mut MsContext,
+    fbx: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+) -> NodeResult {
+    // let var_name = root.word().unwrap();
+    // if let Some(var) = ms_ctx.var_scopes.find_variable(&var_name).cloned() {
+
+    let var = root;
+    let var_ty = ms_ctx
+        .current_module
+        .type_registry
+        .get_from_type_id(var.ty())
+        .unwrap();
+
+    match var_ty {
+        MsType::Native(ms_native_type) => {
+            return var;
+        }
+        MsType::Struct(struct_ty) => {
+            match child {
+                MsTokenType::Word(field_name) => {
+                    let field_name = field_name.as_str();
+                    let field = struct_ty
+                        .get_field(field_name)
+                        .expect(&format!("unknown field in struct {}", field_name));
+
+                    let ptr = var.value(fbx);
+
+                    let ptr = MsVal::new(var.ty(), ptr);
+                    let val = struct_ty.get_data(ptr, field_name, ms_ctx, fbx, module);
+                    return NodeResult::Val(val);
+                }
+                MsTokenType::Nested(field_name, child) => {
+                    let field_name = field_name.word().unwrap();
+                    let field = struct_ty
+                        .get_field(field_name)
+                        .expect(&format!("unknown field in struct {}", field_name));
+
+                    let ptr = var.value(fbx);
+
+                    let ptr = MsVal::new(var.ty(), ptr);
+                    let val = struct_ty.get_data(ptr, field_name, ms_ctx, fbx, module);
+
+                    let child_ptr = NodeResult::Val(val);
+
+                    return compile_nested_struct_access(child_ptr, child, ms_ctx, fbx, module);
+                }
+                _ => unreachable!(),
+            };
+        }
+        MsType::Ref(ms_type, _) => todo!(),
+    };
 }
 
 pub fn implicit_cast(
@@ -690,8 +960,7 @@ pub fn compile_statements(
                 let variable = ms_ctx.new_variable();
                 fbx.declare_var(variable, ty.to_cl_type().unwrap());
                 fbx.def_var(variable, value);
-                let mut variable = MsVar::new(node_value.ty(), variable);
-                variable.is_mutable = *is_mutable;
+                let mut variable = MsVar::new(node_value.ty(), variable, *is_mutable, false);
                 // variable.mark_mutability(*is_mutable);
                 if let Some(old_variable) = ms_ctx.var_scopes.add_variable(var_name, variable) {
                     drop_variable(&old_variable, ms_ctx, fbx, module);
@@ -699,8 +968,29 @@ pub fn compile_statements(
             }
             Statement::Return(node) => {
                 let ret_inst = if let Some(var) = compile_node(node, module, fbx, ms_ctx) {
-                    let val = var.value(fbx);
-                    fbx.ins().return_(&[val])
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_type_id(var.ty())
+                        .unwrap();
+
+                    match ty {
+                        MsType::Native(nty) => {
+                            let val = var.value(fbx);
+                            fbx.ins().return_(&[val])
+                        }
+                        MsType::Struct(sty) => {
+                            let src = var.value(fbx);
+
+                            let dest = ms_ctx.var_scopes.find_variable("return").unwrap().c_var;
+                            let dest = fbx.use_var(dest);
+
+                            sty.copy(dest, src, fbx, module, ms_ctx);
+
+                            fbx.ins().return_(&[])
+                        }
+                        MsType::Ref(ms_type, _) => todo!(),
+                    }
                 } else {
                     fbx.ins().return_(&[])
                 };
@@ -886,11 +1176,11 @@ pub fn compile_if_else_chain(
 }
 
 pub fn random_readable_char(mut rng: impl rand::Rng) -> char {
-    let val = rng.gen_range(0..=3);
+    let val = rng.gen_range(0..=10);
     match val {
-        0 => rng.gen_range('a'..='z'),
-        1 => rng.gen_range('A'..='Z'),
-        2 => rng.gen_range('0'..='9'),
+        0..3 => rng.gen_range('a'..='z'),
+        3..6 => rng.gen_range('A'..='Z'),
+        6..9 => rng.gen_range('0'..='9'),
         _ => '_',
     }
 }
@@ -904,7 +1194,7 @@ pub fn random_string(len: usize) -> String {
 pub fn random_string_into(len: usize, mut w: impl Write) {
     let mut rng = rand::thread_rng();
     w.write_char(rng.gen_range('a'..='z'));
-    for i in 1..len {
+    for _ in 1..len {
         let c = random_readable_char(&mut rng);
         w.write_char(c).unwrap();
     }
