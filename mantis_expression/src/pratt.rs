@@ -62,8 +62,9 @@ impl WordSpan {
                 let reset = "\x1B[0m";
                 if cursor + line.len() >= self.range.end && cursor <= self.range.start {
                     let prev = &line[..self.range.start - cursor];
-                    let next =
-                        &line[(cursor + line.len() + self.range.len() - 1) - self.range.end..];
+                    // let next =
+                    //     &line[ (cursor + line.len() + self.range.len() - 1) - self.range.end..];
+                    let next = &line[self.range.end - cursor..];
                     write!(
                         &mut buf,
                         "{}: {} {red}{}{reset}{}\n",
@@ -245,13 +246,13 @@ impl Type {
     pub fn word(&self) -> Option<&str> {
         match self {
             Type::Word(word_span) => Some(word_span.as_str()),
-            _ => todo!(),
+            _ => None,
         }
     }
     pub fn word_highlight(&self) -> Option<String> {
         match self {
             Type::Word(word_span) => Some(word_span.highlight()),
-            _ => todo!(),
+            _ => None,
         }
     }
 }
@@ -354,11 +355,15 @@ fn parse_expr(pairs: Pairs<Rule>, pratt: &PrattParser<Rule>, src: &Rc<str>) -> N
                 src,
             )))),
 
-            Rule::array_initialization => Node::Term(Term::Array(parse_expr_list(
-                primary.into_inner().next().unwrap(),
-                pratt,
-                src,
-            ))),
+            Rule::array_initialization => {
+                let arr = if let Some(expr_list) = primary.into_inner().next() {
+                    parse_expr_list(expr_list, pratt, src)
+                } else {
+                    Vec::new()
+                };
+
+                Node::Term(Term::Array(arr))
+            }
             _ => unreachable!(
                 "Unhandled Rule {:?} {:?}",
                 primary.as_rule(),

@@ -81,7 +81,7 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       single_assignment = { word ~ ":" ~ expr }
       assignment_list = { single_assignment ~ ("," ~ single_assignment)* ~ ","? }
       struct_initialization = { type_name ~ "{" ~ assignment_list ~ "}" }
-      array_initialization = { "[" ~ expr_list ~ "]" }
+      array_initialization = { "[" ~ expr_list? ~ "]" }
 
       use_decl = { "use" ~  use_alias ~ ";"}
       use_alias = _{ word ~ ("." ~ word)* ~ (cast ~  word)? }

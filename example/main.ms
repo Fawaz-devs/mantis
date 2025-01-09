@@ -7,6 +7,11 @@ fn memcpy(dest i64, src i64, count i64) i64 extern;
 fn strlen(ptr i64) i64 extern;
 
 
+type Option[T] = enum {
+    Some(T),
+    None
+}
+
 type ptr[T] = i64;
 
 type ArraySlice[T] = struct {
@@ -14,8 +19,82 @@ type ArraySlice[T] = struct {
     len u64
 }
 
-type StrSlice = ArraySlice[u8];
+type Vec[T] = struct {
+    capacity u64,
+    slice ArraySlice[T]
+}
 
+
+impl Drop for Vec[T] {
+    fn drop(self @mut Self) {
+        free(self.slice.pointer);
+    }
+}
+
+impl Self for Vec[T] {
+    fn with_capacity(cap u64) Self {
+        if cap > 0 {
+            return Self {
+                slice: ArraySlice[T] {
+                    pointer: malloc(cap),
+                    len: 0
+                },
+                capacity: cap
+            };
+        } else {
+            return Self {
+                slice: [],
+                capacity: cap
+            };
+        }
+    }
+
+    fn new() Self {
+        return Self.with_capacity(0);
+    }
+
+    fn grow(self @mut Self, new_cap u64) {
+        let new_vec = Self.with_capacity(new_cap);
+        memcpy(new_vec.slice.pointer, self.slice.pointer, self.slice.len);
+        new_vec.slice.len = self.slice.len;
+        self = new_vec;
+    }
+
+    fn push(self @mut Self, element T) {
+        *(self.slice.pointer + self.slice.len) = element;
+    }
+
+    fn truncate(self @mut Self, new_len u64) {
+      self.slice.len = new_len;  
+    }
+
+    fn clear(self @mut Self) {
+        self.truncate(0);
+    }
+    
+    fn get_at(self @Self, idx u64) Option[@T] {
+        if idx < self.slice.len {
+            return Option.Some(self.slice.pointer + self.slice.len);
+        } else {
+            return Option.None;
+        }
+    }
+
+    fn pop(self @mut Self) Option[T] {
+        if self.slice.len != 0 {
+            let result = Option.Some(self.slice.pointer + self.slice.len);
+            self.slice.len = self.slice.len - 1;
+            return result;
+        } else {
+            return Option.None;
+        }
+    }
+    
+}
+
+
+
+type StrSlice = ArraySlice[u8];
 
 fn print(s StrSlice) {
     write(1, s.pointer, s.len);
@@ -108,9 +187,9 @@ impl Self for String {
         s.push_str(slice);
         return s;
     }
-
 }
 
+type StrVec = Vec[u8];
 
 
 fn main(argc i32, argv i64) i32 { 

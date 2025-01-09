@@ -20,8 +20,8 @@ use super::{
         MsTraitTemplates,
     },
     types::{
-        MsGenericTemplate, MsType, MsTypeId, MsTypeNameRegistry, MsTypeRegistry, MsTypeTemplates,
-        MsTypeWithId, TypeNameWithGenerics,
+        EnumWithGenerics, MsGenericTemplate, MsGenericTemplateInner, MsType, MsTypeId,
+        MsTypeNameRegistry, MsTypeRegistry, MsTypeTemplates, MsTypeWithId, TypeNameWithGenerics,
     },
 };
 
@@ -162,9 +162,6 @@ impl MsModule {
             }
 
             Type::Ref(ty, is_mutable) => {
-                // let ty = self.resolve(ty)?.ty()?;
-                // let cty = Type::WithGenerics(Type::Word("ptr".into()).into(), vec![*ty.clone()]);
-
                 let ty = self.resolve(ty, self_type)?.ty().unwrap();
 
                 let ty = MsResolved::TypeRef(ty, *is_mutable);
@@ -186,7 +183,9 @@ impl MsModule {
             Type::WithGenerics(ty, generics) => {
                 let template = MsGenericTemplate {
                     generics: root_generices.to_vec(),
-                    inner_type: Either::Left(TypeNameWithGenerics::from_type(type_name)),
+                    inner_type: MsGenericTemplateInner::Type(TypeNameWithGenerics::from_type(
+                        type_name,
+                    )),
                 };
 
                 return template;
@@ -194,7 +193,9 @@ impl MsModule {
             Type::Word(span) => {
                 let template = MsGenericTemplate {
                     generics: root_generices.to_vec(),
-                    inner_type: Either::Left(TypeNameWithGenerics::from_type(type_name)),
+                    inner_type: MsGenericTemplateInner::Type(TypeNameWithGenerics::from_type(
+                        type_name,
+                    )),
                 };
 
                 return template;
@@ -209,7 +210,7 @@ impl MsModule {
 
                 let template = MsGenericTemplate {
                     generics: root_generices.to_vec(),
-                    inner_type: Either::Right(StructWithGenerics { map }),
+                    inner_type: MsGenericTemplateInner::Struct(StructWithGenerics { map }),
                 };
 
                 return template;
@@ -222,8 +223,24 @@ impl MsModule {
                     .expect("can't find module");
                 return module.resolve_with_generics(child, root_generices);
             }
+            Type::Enum { fields } => {
+                let mut map = LinearMap::<Box<str>, Option<TypeNameWithGenerics>>::new();
 
-            _ => unreachable!("unhandled"),
+                for (variant_name, fields) in fields {
+                    let argument = fields.first().map(|x| TypeNameWithGenerics::from_type(x));
+
+                    map.insert(variant_name.as_str().into(), argument);
+                }
+
+                let inner = MsGenericTemplateInner::Enum(EnumWithGenerics { map });
+
+                let template = MsGenericTemplate {
+                    generics: root_generices.to_vec(),
+                    inner_type: inner,
+                };
+                return template;
+            }
+            _ => unreachable!("unhandled {:?}", type_name),
         };
     }
 }

@@ -3,12 +3,18 @@ use std::{
     rc::Rc,
 };
 
-use cranelift::prelude::{types, AbiParam, FunctionBuilder, InstBuilder, MemFlags};
+use cranelift::prelude::{
+    isa::TargetFrontendConfig, types, AbiParam, FunctionBuilder, InstBuilder, MemFlags,
+};
 use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use linear_map::LinearMap;
 
-use crate::{frontend::tokens::MsContext, native::instructions::Either};
+use crate::{
+    backend::compile_function::compile_assignment_on_pointers,
+    frontend::tokens::MsContext,
+    native::instructions::{Either, NodeResult},
+};
 
 use super::{
     functions::MsDeclaredFunction,
@@ -124,7 +130,7 @@ impl MsStructType {
                 field.offset as i32,
             ),
             MsType::Struct(_sty) => fbx.ins().iadd_imm(ptr.value(), field.offset as i64),
-            MsType::Ref(ms_type, _) => todo!(),
+            _ => todo!(),
         };
 
         return MsVal::new(field.ty, value);
@@ -169,7 +175,7 @@ impl MsStructType {
                 let dest = fbx.ins().iadd_imm(ptr.value(), field.offset as i64);
                 struct_ty.copy(dest, value.value(), fbx, module, ms_ctx);
             }
-            MsType::Ref(ms_type, _) => todo!(),
+            _ => todo!(),
         }
     }
 
@@ -225,3 +231,68 @@ impl MsStructType {
 //     );
 //     return st;
 // }
+
+#[derive(Clone, Debug, Default)]
+pub struct MsEnumType {
+    variants: LinearMap<Box<str>, Option<MsTypeWithId>>,
+    max_variant_size: usize,
+}
+
+impl MsEnumType {
+    pub fn add_variant(
+        &mut self,
+        variant_name: impl Into<Box<str>>,
+        variant_arg: Option<MsTypeWithId>,
+    ) {
+        if let Some(variant_arg) = variant_arg {
+            self.max_variant_size = self.max_variant_size.max(variant_arg.ty.size());
+            self.variants.insert(variant_name.into(), Some(variant_arg));
+        } else {
+            self.variants.insert(variant_name.into(), None);
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        self.max_variant_size + 8 // extra i64 to store the tag of enum value
+    }
+
+    pub fn set_variant(
+        &self,
+        self_ptr: cranelift::prelude::Value,
+        variant_name: &str,
+        variant_arg: Option<NodeResult>,
+        fbx: &mut FunctionBuilder,
+        ms_ctx: &mut MsContext,
+        module: &mut ObjectModule,
+    ) {
+        let mut found_variant = false;
+        for (idx, (key, value)) in self.variants.iter().enumerate() {
+            let key: &str = &key;
+            if key == variant_name {
+                found_variant = true;
+                {
+                    let value = fbx.ins().iconst(types::I64, idx as i64);
+                    fbx.ins().store(MemFlags::new(), value, self_ptr, 0); // storing the tag
+                }
+
+                if let Some(value) = value {
+                    let arg = variant_arg.unwrap();
+                    assert!(arg.ty() == value.id);
+                    let variant_ptr = fbx.ins().iadd_imm(self_ptr, 8);
+                    let ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_str("i64")
+                        .unwrap();
+                    let lhs = NodeResult::Val(MsVal::new(ty.id, variant_ptr)); // ptr
+                    compile_assignment_on_pointers(lhs, arg, module, fbx, ms_ctx);
+                }
+                break;
+            }
+        }
+
+        if !found_variant {
+            panic!("undefiend variant {} on type {:?}", variant_name, self);
+        }
+    }
+}

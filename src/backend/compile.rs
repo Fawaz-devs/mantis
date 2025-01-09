@@ -126,6 +126,8 @@ pub fn compile_binary(
                 let trait_name = trait_decl.name.word().unwrap();
                 let mut fn_registry = MsFunctionRegistry::default();
 
+                ms_ctx.current_module.type_registry.add_alias("Self", ty.id);
+
                 for function in trait_decl.functions {
                     let trait_fn_for = TraitFunctionFor {
                         trait_name,
@@ -139,19 +141,7 @@ pub fn compile_binary(
                         &mut ms_ctx,
                         Some(trait_fn_for),
                     );
-
-                    // let compiled_fn = compile_function(function, module, ctx, fbx, ms_ctx);
                 }
-
-                // let trait_impls = ms_ctx.trait_registry.registry.get_mut(trait_name).unwrap();
-
-                // if trait_impls.insert(ty.id, fn_registry).is_some() {
-                //     panic!("the trait has been previously implemented on the type");
-                // }
-
-                // // trait_impls.insert();
-
-                // todo!("add functions from trait implementations to ms_context")
             }
         }
     }

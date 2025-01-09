@@ -74,7 +74,7 @@ pub fn compile_function(
                     returns_struct = true;
                     ctx.func.signature.params.push(struct_ty.to_abi_param());
                 }
-                MsType::Ref(ms_type, _) => todo!(),
+                _ => todo!(),
             };
 
             Some(ty.id)
@@ -316,7 +316,7 @@ pub fn compile_assignment(
             let src = rhs.value(fbx);
             sty.copy(dest, src, fbx, module, ms_ctx);
         }
-        MsType::Ref(ms_type, _) => todo!(),
+        _ => todo!(),
     }
 }
 
@@ -330,7 +330,7 @@ pub fn compile_assignment_on_pointers(
     let ty = ms_ctx
         .current_module
         .type_registry
-        .get_from_type_id(lhs.ty())
+        .get_from_type_id(rhs.ty())
         .unwrap();
     match ty {
         MsType::Native(nty) => {
@@ -343,7 +343,7 @@ pub fn compile_assignment_on_pointers(
             let src = rhs.value(fbx);
             sty.copy(dest, src, fbx, module, ms_ctx);
         }
-        MsType::Ref(ms_type, _) => todo!(),
+        _ => todo!(),
     }
 }
 
@@ -610,7 +610,7 @@ pub fn compile_node(
 
                         returns_a_struct_ptr = Some(ptr);
                     }
-                    MsType::Ref(ms_type, _) => todo!(),
+                    _ => todo!(),
                 }
 
                 if let Some(var) = method_on_variable {
@@ -821,7 +821,10 @@ pub fn compile_node(
                         .current_module
                         .type_registry
                         .get_from_str(ty_name)
-                        .unwrap();
+                        .expect(&format!(
+                            "couldn't find type_name {ty_name}\n{}",
+                            ty.word_highlight().unwrap()
+                        ));
 
                     let MsType::Struct(struct_type) = ty.ty else {
                         panic!("undefined struct {}", ty_name);
@@ -906,7 +909,7 @@ pub fn compile_nested_struct_access(
                 _ => unreachable!(),
             };
         }
-        MsType::Ref(ms_type, _) => todo!(),
+        _ => todo!(),
     };
 }
 
@@ -989,7 +992,7 @@ pub fn compile_statements(
 
                             fbx.ins().return_(&[])
                         }
-                        MsType::Ref(ms_type, _) => todo!(),
+                        _ => todo!(),
                     }
                 } else {
                     fbx.ins().return_(&[])

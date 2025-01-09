@@ -67,14 +67,14 @@ fn main() {
 
 fn init_logger() {
     use std::io::Write;
-
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format(|buf, record| {
             let ts = buf.timestamp();
             writeln!(
                 buf,
-                "{} [{}:{}] - {}",
+                "{} {} [{}:{}] - {}",
                 ts,
+                record.level(),
                 record.file().unwrap_or("unknown"),
                 record.line().unwrap_or(0),
                 record.args()
@@ -129,9 +129,11 @@ fn handle0(args: Args) {
         #[cfg(target_os = "linux")]
         {
             if let Some(exe_file_path) = &args.exe {
-                assert!(
-                    run_cmd("cc", [obj_file_path.as_str(), "-o", exe_file_path.as_str()]).success()
-                );
+                assert!(run_cmd(
+                    "cc",
+                    &[obj_file_path.as_str(), "-o", exe_file_path.as_str()]
+                )
+                .success());
 
                 log::info!("executable created at {}", exe_file_path.as_str());
             } else if let Some(lib_file_path) = &args.lib {
@@ -145,7 +147,7 @@ fn handle0(args: Args) {
                 };
                 assert!(run_cmd(
                     "cc",
-                    [
+                    &[
                         obj_file_path.as_str(),
                         lib_type,
                         "-o",
@@ -158,13 +160,8 @@ fn handle0(args: Args) {
             if args.run {
                 if let Some(exe_file_path) = &args.exe {
                     {
-                        let instant = Instant::now();
-                        let code = run_cmd(exe_file_path, args.run_args.iter()).code().unwrap();
-                        log::info!(
-                            "exited with {}, spent {:.4}s",
-                            code,
-                            instant.elapsed().as_secs_f64()
-                        );
+                        let args = args.run_args.iter().map(|x| x.as_str()).collect::<Vec<_>>();
+                        let _ = run_cmd(exe_file_path, &args).code().unwrap();
                     }
                 } else {
                     let mut exe_file_path =
@@ -172,21 +169,14 @@ fn handle0(args: Args) {
 
                     let exe_file_path_str = exe_file_path.to_str().unwrap();
                     assert!(
-                        run_cmd("cc", [obj_file_path.as_str(), "-o", exe_file_path_str]).success()
+                        run_cmd("cc", &[obj_file_path.as_str(), "-o", exe_file_path_str]).success()
                     );
 
                     log::info!("executable created at {} and running", exe_file_path_str);
 
                     {
-                        let instant = Instant::now();
-                        let code = run_cmd(exe_file_path_str, args.run_args.iter())
-                            .code()
-                            .unwrap();
-                        log::info!(
-                            "exited with {}, spent {:.4}s",
-                            code,
-                            instant.elapsed().as_secs_f64()
-                        );
+                        let args = args.run_args.iter().map(|x| x.as_str()).collect::<Vec<_>>();
+                        let code = run_cmd(exe_file_path_str, &args).code().unwrap();
                     }
                 }
             }
@@ -198,12 +188,13 @@ fn handle0(args: Args) {
     }
 }
 
-pub fn run_cmd<I, S>(exe: impl AsRef<std::ffi::OsStr>, args: I) -> ExitStatus
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<std::ffi::OsStr>,
-{
+pub fn run_cmd(exe: &str, args: &[&str]) -> ExitStatus {
+    log::info!("running {} with args {}", exe, args.join(" "));
+    let instant = Instant::now();
     let mut child = std::process::Command::new(exe).args(args).spawn().unwrap();
+    let exit_status = child.wait().unwrap();
+    let seconds = instant.elapsed().as_secs_f64();
+    log::info!("Exited with {:?} spent {:.4}s", exit_status, seconds);
 
-    child.wait().unwrap()
+    exit_status
 }

@@ -13,8 +13,10 @@ use mantis_expression::{node::BinaryOperation, pratt};
 use crate::{backend::compile_function::random_string, native::instructions::Either};
 
 use super::{
-    functions::MsDeclaredFunction, modules::MsModule, structs::MsStructType, MsRegistry,
-    MsRegistryExt,
+    functions::MsDeclaredFunction,
+    modules::MsModule,
+    structs::{MsEnumType, MsStructType},
+    MsRegistry, MsRegistryExt,
 };
 
 #[derive(Clone, Debug, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -360,6 +362,36 @@ impl TypeNameWithGenerics {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct EnumWithGenerics {
+    pub map: LinearMap<Box<str>, Option<TypeNameWithGenerics>>,
+}
+
+impl EnumWithGenerics {
+    fn generate(
+        &self,
+        real_types: &HashMap<Box<str>, MsTypeWithId>,
+        ms_module: &mut MsModule,
+    ) -> MsTypeWithId {
+        let mut enum_ty = MsEnumType::default();
+        for (field_name, field_ty) in &self.map {
+            if let Some(field_ty) = field_ty {
+                let ty = field_ty.generate(&real_types, ms_module);
+                enum_ty.add_variant(field_name.clone(), Some(ty));
+            } else {
+                enum_ty.add_variant(field_name.clone(), None);
+            }
+        }
+
+        let ty = MsType::Enum(Rc::new(enum_ty));
+
+        let ty_name = random_string(20);
+        let id = ms_module.type_registry.add_type(ty_name, ty.clone());
+
+        return MsTypeWithId { ty, id };
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct StructWithGenerics {
     pub map: LinearMap<Box<str>, TypeNameWithGenerics>,
 }
@@ -386,9 +418,16 @@ impl StructWithGenerics {
 }
 
 #[derive(Clone, Debug)]
+pub enum MsGenericTemplateInner {
+    Type(TypeNameWithGenerics),
+    Struct(StructWithGenerics),
+    Enum(EnumWithGenerics),
+}
+
+#[derive(Clone, Debug)]
 pub struct MsGenericTemplate {
     pub generics: Vec<String>,
-    pub inner_type: Either<TypeNameWithGenerics, StructWithGenerics>,
+    pub inner_type: MsGenericTemplateInner,
 }
 
 impl MsGenericTemplate {
@@ -398,44 +437,15 @@ impl MsGenericTemplate {
         self.generics.push(s);
     }
 
-    // pub fn add_field(&mut self, field_name: impl Into<String>, field_type: Either<MsType, String>) {
-    //     self.generic_map.insert(field_name.into(), field_type);
-    // }
-
-    // pub fn to_struct(&self, generics: &BTreeMap<String, MsType>) -> MsStructType {
-    //     assert!(self.generics.len() == generics.len());
-
-    //     let mut st = MsStructType::default();
-
-    //     for (k, v) in &self.generic_map {
-    //         let ty = match v {
-    //             Either::Left(ty) => ty,
-    //             Either::Right(gen) => generics.get(gen).expect("Missing generic type"),
-    //         };
-
-    //         match ty {
-    //             MsType::Native(nty) => st.add_field(k, MsType::Native(*nty)),
-    //             MsType::Struct(field) => {
-    //                 st.add_field(k, MsType::Struct(field.clone()));
-    //             }
-    //             // MsType::Generic(gen) => {
-    //             //     let field = gen.to_struct(generics);
-    //             //     st.add_field(k, MsType::Struct(Rc::new(field)));
-    //             // }
-    //             MsType::Ref(ms_type, _) => todo!(),
-    //         };
-    //     }
-    //     st
-    // }
-
     pub fn generate(
         &self,
         real_types: &HashMap<Box<str>, MsTypeWithId>,
         ms_module: &mut MsModule,
     ) -> MsTypeWithId {
         match &self.inner_type {
-            Either::Left(ty) => ty.generate(&real_types, ms_module),
-            Either::Right(struct_ty) => struct_ty.generate(&real_types, ms_module),
+            MsGenericTemplateInner::Type(ty) => ty.generate(&real_types, ms_module),
+            MsGenericTemplateInner::Struct(ty) => ty.generate(&real_types, ms_module),
+            MsGenericTemplateInner::Enum(enum_with_generics) => todo!(),
         }
     }
 }
@@ -444,6 +454,7 @@ impl MsGenericTemplate {
 pub enum MsType {
     Native(MsNativeType),
     Struct(Rc<MsStructType>),
+    Enum(Rc<MsEnumType>),
     Ref(Box<MsType>, bool),
 }
 
@@ -551,7 +562,8 @@ impl Display for MsTypeId {
 #[derive(Debug)]
 pub struct MsTypeNameRegistry {
     map: HashMap<Box<str>, MsTypeId>, // map -> type_id
-    inner: Vec<MsType>,
+    inner_map: HashMap<MsTypeId, MsType>,
+    // inner: Vec<MsType>,
 }
 
 #[derive(Debug, Clone)]
@@ -569,7 +581,8 @@ impl MsTypeNameRegistry {
     }
 
     pub fn get_from_type_id(&self, id: MsTypeId) -> Option<MsType> {
-        self.inner.get(id.0).cloned()
+        self.inner_map.get(&id).cloned()
+        // self.inner.get(id.0).cloned()
     }
 
     pub fn get_type_id(&self, s: &str) -> Option<MsTypeId> {
@@ -577,7 +590,9 @@ impl MsTypeNameRegistry {
     }
 
     pub fn add_type(&mut self, ty_name: impl Into<Box<str>>, ty: MsType) -> MsTypeId {
-        let idx = MsTypeId(self.inner.len());
+        let idx = MsTypeId(rand::random());
+
+        // let idx = MsTypeId(self.inner.len());
         let ty_name: Box<str> = ty_name.into();
 
         log::info!("Added Type {} -> {:?} with type_id {}", ty_name, ty, idx);
@@ -585,7 +600,9 @@ impl MsTypeNameRegistry {
             panic!("A Type with that name already exists");
         }
 
-        self.inner.push(ty);
+        // self.inner.push(ty);
+
+        self.inner_map.insert(idx.clone(), ty.clone());
         idx
     }
 
@@ -593,14 +610,15 @@ impl MsTypeNameRegistry {
         let ty_name: Box<str> = ty_name.into();
         log::info!("Added Alias {} -> with type_id {}", ty_name, ty_id);
         if self.map.insert(ty_name, ty_id).is_some() {
-            panic!("Already a type_name exists");
+            log::warn!("Already a type_name exists");
         }
     }
 
     pub fn with_default_types() -> Self {
         let mut registry = Self {
             map: Default::default(),
-            inner: Default::default(),
+            // inner: Default::default(),
+            inner_map: Default::default(),
         };
 
         registry.add_type("i8", MsType::Native(MsNativeType::I8));
