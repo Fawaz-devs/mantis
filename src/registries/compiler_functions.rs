@@ -4,10 +4,7 @@ use cranelift::prelude::{types, FunctionBuilder, InstBuilder, StackSlotData};
 use cranelift_object::ObjectModule;
 use mantis_tokens::MantisLexerTokens;
 
-use crate::{
-    frontend::tokens::{MsContext, MsNode},
-    native::instructions::NodeResult,
-};
+use crate::{frontend::tokens::MsNode, ms::MsContext, native::instructions::NodeResult};
 
 use super::{
     types::MsType,

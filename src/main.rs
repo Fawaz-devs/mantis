@@ -13,6 +13,7 @@ mod backend;
 mod frontend;
 mod lexer;
 mod libc;
+mod ms;
 mod native;
 mod registries;
 mod scope;

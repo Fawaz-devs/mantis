@@ -1,4 +1,4 @@
-use crate::frontend::tokens::MsContext;
+use crate::ms::MsContext;
 use crate::native::instructions::NodeResult;
 use crate::registries::functions::{FunctionType, MsDeclaredFunction};
 use crate::registries::modules::MsResolved;
@@ -38,7 +38,8 @@ pub fn compile_function(
     fbx: &mut FunctionBuilderContext,
     ms_ctx: &mut MsContext,
     trait_on_type: Option<TraitFunctionFor>,
-) {
+    exporting_fn_name: Option<&str>,
+) -> Rc<MsDeclaredFunction> {
     let name = function.name.word().unwrap();
     let mut linkage = Linkage::Preemptible;
     if function.is_extern {
@@ -56,12 +57,12 @@ pub fn compile_function(
         None
     };
 
-    let mut returns_struct = false;
+    let mut returns_struct_or_enum = false;
     let return_ty = {
         if !matches!(function.return_type, MsTokenType::Unknown) {
             let ty = ms_ctx
                 .current_module
-                .resolve(&function.return_type, self_type.clone())
+                .resolve(&function.return_type)
                 .expect(&format!("invalid type_name"))
                 .ty()
                 .unwrap();
@@ -71,8 +72,12 @@ pub fn compile_function(
                     ctx.func.signature.returns.push(nty.to_abi_param().unwrap());
                 }
                 MsType::Struct(struct_ty) => {
-                    returns_struct = true;
+                    returns_struct_or_enum = true;
                     ctx.func.signature.params.push(struct_ty.to_abi_param());
+                }
+                MsType::Enum(enum_ty) => {
+                    returns_struct_or_enum = true;
+                    ctx.func.signature.params.push(enum_ty.to_abi_param());
                 }
                 _ => todo!(),
             };
@@ -85,12 +90,7 @@ pub fn compile_function(
 
     let mut fn_arguments = LinearMap::<Box<str>, MsTypeId>::with_capacity(function.arguments.len());
     for (k, v) in &function.arguments {
-        let ty = ms_ctx
-            .current_module
-            .resolve(v, self_type.clone())
-            .unwrap()
-            .ty()
-            .unwrap();
+        let ty = ms_ctx.current_module.resolve(v).unwrap().ty().unwrap();
 
         ctx.func
             .signature
@@ -101,7 +101,11 @@ pub fn compile_function(
     }
 
     let func_id = module
-        .declare_function(&name, linkage, &ctx.func.signature)
+        .declare_function(
+            exporting_fn_name.unwrap_or(name),
+            linkage,
+            &ctx.func.signature,
+        )
         .unwrap();
 
     let declared_function = Rc::new(MsDeclaredFunction {
@@ -117,27 +121,26 @@ pub fn compile_function(
     ms_ctx
         .current_module
         .fn_registry
-        .add_function(name, declared_function.clone());
+        .add_function(exporting_fn_name.unwrap_or(name), declared_function.clone());
 
     if let Some(tot) = &trait_on_type {
-        // log::info!(
-        //     "Adding function {} on trait {} on {}",
-        //     name,
-        //     tot.trait_name,
-        //     tot.on_type.id
-        // );
-
         ms_ctx.current_module.trait_registry.add_function(
             tot.trait_name,
             tot.on_type.id.clone(),
             name.into(),
             declared_function.clone(),
         );
+
+        ms_ctx.current_module.type_fn_registry.add_function(
+            tot.on_type.id,
+            name,
+            declared_function.clone(),
+        );
     }
 
     if matches!(function.block, Block::Empty) {
         ctx.clear();
-        return;
+        return declared_function;
     }
     let mut f = FunctionBuilder::new(&mut ctx.func, fbx);
     ms_ctx.var_scopes.new_scope();
@@ -149,7 +152,7 @@ pub fn compile_function(
     let block_params = f.block_params(entry_block).to_vec();
 
     let mut fn_args_iter = block_params.iter();
-    if returns_struct {
+    if returns_struct_or_enum {
         let return_ty_id = return_ty.unwrap();
         let ty = ms_ctx
             .current_module
@@ -184,20 +187,20 @@ pub fn compile_function(
     {
         if compile_block(&function.block, module, &mut f, ms_ctx).is_none() {
             let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-            drop_scope(scope, ms_ctx, &mut f, module);
+            drop_scope(&scope, ms_ctx, &mut f, module);
             f.ins().return_(&[]);
         }
     }
     f.seal_block(entry_block);
 
-    let mut ir = String::new();
-    codegen::write_function(&mut ir, &f.func).unwrap();
-
-    // log::info!("IR:\n{ir}");
+    // let mut ir = String::new();
+    // codegen::write_function(&mut ir, &f.func).unwrap();
 
     f.finalize();
     module.define_function(func_id, ctx).unwrap();
     ctx.clear();
+
+    return declared_function;
 }
 
 pub fn compile_block(
@@ -211,7 +214,7 @@ pub fn compile_block(
             ms_ctx.var_scopes.new_scope();
             compile_block(&block, module, fbx, ms_ctx);
             let vars = ms_ctx.var_scopes.exit_scope().unwrap();
-            drop_scope(vars, ms_ctx, fbx, module);
+            drop_scope(&vars, ms_ctx, fbx, module);
         }
         Block::Statements(stmts) => return compile_statements(&stmts, module, fbx, ms_ctx),
         Block::Continuos(blocks) => {
@@ -552,17 +555,13 @@ pub fn compile_node(
                     {
                         let method_name = child.word().unwrap();
 
-                        let func = ms_ctx
+                        let reg = ms_ctx
                             .current_module
-                            .trait_registry
-                            .registry
-                            .get("Self")
-                            .unwrap()
+                            .type_fn_registry
+                            .map
                             .get(&var.ty_id)
-                            .unwrap()
-                            .registry
-                            .get(method_name)
                             .unwrap();
+                        let func = reg.registry.get(method_name).unwrap();
 
                         method_on_variable = Some(var.clone());
 
@@ -570,7 +569,7 @@ pub fn compile_node(
                         // let var_ty = ms_ctx.current_module.type_registry.get_from_type_id(var.ty_id).unwrap();
                     } else {
                         let Some(MsResolved::Function(func)) =
-                            ms_ctx.current_module.resolve(fn_name, None)
+                            ms_ctx.current_module.resolve(fn_name)
                         else {
                             panic!("couldn't find function {:?}", fn_name);
                         };
@@ -579,8 +578,7 @@ pub fn compile_node(
                     }
                 }
                 _ => {
-                    let Some(MsResolved::Function(func)) =
-                        ms_ctx.current_module.resolve(fn_name, None)
+                    let Some(MsResolved::Function(func)) = ms_ctx.current_module.resolve(fn_name)
                     else {
                         panic!("couldn't find function {:?}", fn_name);
                     };
@@ -608,6 +606,16 @@ pub fn compile_node(
                         let ptr = fbx.ins().stack_addr(types::I64, stackslot, 0);
                         call_arg_values.push(ptr);
 
+                        returns_a_struct_ptr = Some(ptr);
+                    }
+
+                    MsType::Enum(ety) => {
+                        let stackslot = fbx.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            ety.size() as u32,
+                        ));
+                        let ptr = fbx.ins().stack_addr(types::I64, stackslot, 0);
+                        call_arg_values.push(ptr);
                         returns_a_struct_ptr = Some(ptr);
                     }
                     _ => todo!(),
@@ -648,12 +656,35 @@ pub fn compile_node(
                 let func_ref = module.declare_func_in_func(func.func_id, fbx.func);
                 log::info!("calling a function {:?}", node);
                 let _inst = fbx.ins().call(func_ref, &call_arg_values);
-                // let result = fbx.inst_results(inst);
             }
         }
         Node::Term(term) => {
             match term {
-                Term::Array(vec) => todo!(),
+                Term::Array(arr) => {
+                    let mut arr_ty: Option<MsTypeId> = None;
+                    let mut nodes = Vec::new();
+                    for element in arr {
+                        let node = compile_node(node, module, fbx, ms_ctx).unwrap();
+                        if let Some(ty) = arr_ty.clone() {
+                            assert!(ty == node.ty());
+                        } else {
+                            arr_ty = Some(node.ty());
+                        }
+                        nodes.push(node);
+                    }
+                    let arr_inner_ty = ms_ctx
+                        .current_module
+                        .type_registry
+                        .get_from_type_id(arr_ty.unwrap())
+                        .unwrap();
+                    let arr_stack_size = arr_inner_ty.size() * nodes.len() + 8; // 8 for length
+                    let stackslot = fbx.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        arr_stack_size as u32,
+                    ));
+
+                    todo!();
+                }
                 Term::Function(function_decl) => todo!(),
                 Term::String(word_span) => {
                     let string_literal = word_span.as_str();
@@ -1037,15 +1068,15 @@ pub fn compile_loop(
 ) {
     let loop_name = loop_name.as_ref().map(|x| x.as_str());
     ms_ctx.var_scopes.new_scope();
-    ms_ctx
-        .loop_scopes
-        .new_loop(loop_name.map(|x| x.into()), fbx);
+    ms_ctx.new_loop_scope(loop_name.map(|x| x.into()), fbx);
+    // .loop_scopes
+    // .new_loop(loop_name.map(|x| x.into()), fbx);
 
     compile_block(loop_block, module, fbx, ms_ctx);
 
     ms_ctx.loop_scopes.end_loop(loop_name, fbx);
     let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-    drop_scope(scope, &ms_ctx, fbx, module);
+    drop_scope(&scope, &ms_ctx, fbx, module);
 }
 
 pub struct IfElseChainBuilder {
@@ -1073,7 +1104,7 @@ impl IfElseChainBuilder {
 
         let inst = compile_block(&block.block, module, fbx, ms_ctx);
         let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-        drop_scope(scope, ms_ctx, fbx, module);
+        drop_scope(&scope, ms_ctx, fbx, module);
         if inst.is_none() {
             fbx.ins().jump(end_block, &[]);
         }
@@ -1110,7 +1141,7 @@ impl IfElseChainBuilder {
 
         let inst = compile_block(&block.block, module, fbx, ms_ctx);
         let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-        drop_scope(scope, ms_ctx, fbx, module);
+        drop_scope(&scope, ms_ctx, fbx, module);
         if inst.is_none() {
             fbx.ins().jump(end_block, &[]);
         }
@@ -1134,7 +1165,7 @@ impl IfElseChainBuilder {
 
         let inst = compile_block(&block, module, fbx, ms_ctx);
         let scope = ms_ctx.var_scopes.exit_scope().unwrap();
-        drop_scope(scope, ms_ctx, fbx, module);
+        drop_scope(&scope, ms_ctx, fbx, module);
         if inst.is_none() {
             fbx.ins().jump(self.end_block, &[]);
         }

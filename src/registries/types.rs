@@ -8,7 +8,10 @@ use std::{
 use codegen::ir::{condcodes, Inst};
 use cranelift::prelude::*;
 use linear_map::LinearMap;
-use mantis_expression::{node::BinaryOperation, pratt};
+use mantis_expression::{
+    node::BinaryOperation,
+    pratt::{self, FunctionDecl},
+};
 
 use crate::{backend::compile_function::random_string, native::instructions::Either};
 
@@ -316,12 +319,44 @@ pub fn binary_cmp_op_to_condcode_intcc(op: BinaryOperation, signed: bool) -> con
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeNameWithGenerics {
     pub name: Box<str>,
     pub generics: Vec<TypeNameWithGenerics>,
 }
+
 impl TypeNameWithGenerics {
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let mut name = String::new();
+        let mut generics = Vec::new();
+        for (i, c) in s.chars().enumerate() {
+            if c == '[' {
+                let end_of_generic_args = s[i..].find(']')?;
+                generics = s[i..end_of_generic_args]
+                    .split(',')
+                    .map(|x| Self::parse(x))
+                    .collect::<Option<Vec<Self>>>()?;
+
+                break;
+            } else {
+                name.push(c);
+            }
+        }
+
+        Some(Self {
+            name: name.into(),
+            generics,
+        })
+    }
+
+    pub fn new(name: Box<str>, inner_types: Vec<TypeNameWithGenerics>) -> Self {
+        Self {
+            name,
+            generics: inner_types,
+        }
+    }
+
     pub fn generate(
         &self,
         real_types: &HashMap<Box<str>, MsTypeWithId>,
@@ -346,18 +381,23 @@ impl TypeNameWithGenerics {
         return template.generate(real_types, ms_module);
     }
 
-    pub fn from_type(ty: &pratt::Type) -> Self {
-        match ty {
+    pub fn from_type(ty: &pratt::Type) -> Option<Self> {
+        let ty = match ty {
             pratt::Type::WithGenerics(ty_name, generics) => Self {
                 name: ty_name.to_string().into(),
-                generics: generics.iter().map(Self::from_type).collect(),
+                generics: generics
+                    .iter()
+                    .map(Self::from_type)
+                    .collect::<Option<Vec<_>>>()?,
             },
             pratt::Type::Word(word_span) => Self {
                 name: word_span.as_str().into(),
                 generics: Vec::new(),
             },
-            _ => todo!(),
-        }
+            _ => return None,
+        };
+
+        Some(ty)
     }
 }
 
@@ -422,6 +462,21 @@ pub enum MsGenericTemplateInner {
     Type(TypeNameWithGenerics),
     Struct(StructWithGenerics),
     Enum(EnumWithGenerics),
+    Function(FunctionWithGenerics),
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionWithGenerics {
+    fn_decl: Rc<FunctionDecl>,
+}
+impl FunctionWithGenerics {
+    fn generte(
+        &self,
+        real_types: &&HashMap<Box<str>, MsTypeWithId>,
+        ms_module: &mut MsModule,
+    ) -> MsTypeWithId {
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -445,7 +500,8 @@ impl MsGenericTemplate {
         match &self.inner_type {
             MsGenericTemplateInner::Type(ty) => ty.generate(&real_types, ms_module),
             MsGenericTemplateInner::Struct(ty) => ty.generate(&real_types, ms_module),
-            MsGenericTemplateInner::Enum(enum_with_generics) => todo!(),
+            MsGenericTemplateInner::Enum(ty) => ty.generate(&real_types, ms_module),
+            MsGenericTemplateInner::Function(func) => func.generte(&real_types, ms_module),
         }
     }
 }
@@ -456,6 +512,7 @@ pub enum MsType {
     Struct(Rc<MsStructType>),
     Enum(Rc<MsEnumType>),
     Ref(Box<MsType>, bool),
+    Function(Rc<MsDeclaredFunction>),
 }
 
 impl PartialEq for MsType {
@@ -561,7 +618,7 @@ impl Display for MsTypeId {
 
 #[derive(Debug)]
 pub struct MsTypeNameRegistry {
-    map: HashMap<Box<str>, MsTypeId>, // map -> type_id
+    map: HashMap<TypeNameWithGenerics, MsTypeId>, // map -> type_id
     inner_map: HashMap<MsTypeId, MsType>,
     // inner: Vec<MsType>,
 }
@@ -574,7 +631,7 @@ pub struct MsTypeWithId {
 
 impl MsTypeNameRegistry {
     pub fn get_from_str(&self, s: &str) -> Option<MsTypeWithId> {
-        let id = *self.map.get(s)?;
+        let id = *self.map.get(&TypeNameWithGenerics::new(s.into(), vec![]))?;
         let ty = self.get_from_type_id(id)?;
 
         Some(MsTypeWithId { id, ty })
@@ -586,7 +643,9 @@ impl MsTypeNameRegistry {
     }
 
     pub fn get_type_id(&self, s: &str) -> Option<MsTypeId> {
-        self.map.get(s).cloned()
+        self.map
+            .get(&TypeNameWithGenerics::new(s.into(), vec![]))
+            .cloned()
     }
 
     pub fn add_type(&mut self, ty_name: impl Into<Box<str>>, ty: MsType) -> MsTypeId {
@@ -595,7 +654,9 @@ impl MsTypeNameRegistry {
         // let idx = MsTypeId(self.inner.len());
         let ty_name: Box<str> = ty_name.into();
 
-        log::info!("Added Type {} -> {:?} with type_id {}", ty_name, ty, idx);
+        let ty_name = TypeNameWithGenerics::new(ty_name, vec![]);
+
+        log::info!("Added Type {:?} -> {:?} with type_id {}", ty_name, ty, idx);
         if self.map.insert(ty_name, idx).is_some() {
             panic!("A Type with that name already exists");
         }
@@ -608,7 +669,8 @@ impl MsTypeNameRegistry {
 
     pub fn add_alias(&mut self, ty_name: impl Into<Box<str>>, ty_id: MsTypeId) {
         let ty_name: Box<str> = ty_name.into();
-        log::info!("Added Alias {} -> with type_id {}", ty_name, ty_id);
+        let ty_name = TypeNameWithGenerics::new(ty_name, vec![]);
+        log::info!("Added Alias {:?} -> with type_id {}", ty_name, ty_id);
         if self.map.insert(ty_name, ty_id).is_some() {
             log::warn!("Already a type_name exists");
         }

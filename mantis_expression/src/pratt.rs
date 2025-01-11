@@ -229,7 +229,7 @@ impl Type {
                 s.push_str(&ty.to_string());
 
                 if !generics.is_empty() {
-                    s.push_str("_[");
+                    s.push_str("[");
                     for gen in generics {
                         s.push_str(&gen.to_string());
                         s.push(',');

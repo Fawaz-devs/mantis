@@ -13,6 +13,7 @@ use logos::Logos;
 
 use crate::{
     libc::libc::declare_external_function,
+    ms::MsContext,
     registries::{
         functions::{
             FunctionType, MsFunctionRegistry, MsFunctionTemplates, MsFunctionType, MsTraitRegistry,
@@ -655,21 +656,6 @@ impl MsClScope {
     }
 }
 
-pub struct MsContext {
-    variable_index: usize,
-    pub type_registry: MsTypeRegistry,
-    pub type_templates: MsTypeTemplates,
-    pub scopes: MsScopes,
-    pub var_scopes: MsVarScopes,
-    pub loop_scopes: MsLoopScopes,
-    pub fn_registry: MsFunctionRegistry,
-    pub fn_templates: MsFunctionTemplates,
-    pub trait_registry: MsTraitRegistry,
-    pub trait_templates: MsTraitTemplates,
-    pub modules: MsModuleRegistry,
-    pub current_module: MsModule,
-}
-
 pub struct FunctionSignature {
     args: Vec<VariableType>,
     return_values: Vec<VariableType>,
@@ -683,30 +669,6 @@ pub struct MsTypeContext {
     local_variables: BTreeMap<String, VariableType>,
     struct_registry: StructRegistry,
     function_registry: FunctionRegistry,
-}
-
-impl MsContext {
-    pub fn new(offset: usize) -> Self {
-        Self {
-            current_module: Default::default(),
-            variable_index: offset,
-            scopes: Default::default(),
-            type_registry: Default::default(),
-            fn_registry: Default::default(),
-            type_templates: Default::default(),
-            fn_templates: Default::default(),
-            trait_registry: Default::default(),
-            trait_templates: Default::default(),
-            var_scopes: Default::default(),
-            modules: Default::default(),
-            loop_scopes: Default::default(),
-        }
-    }
-
-    pub fn new_variable(&mut self) -> Variable {
-        self.variable_index += 1;
-        Variable::new(self.variable_index)
-    }
 }
 
 // impl Expression {

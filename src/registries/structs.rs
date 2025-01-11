@@ -12,7 +12,7 @@ use linear_map::LinearMap;
 
 use crate::{
     backend::compile_function::compile_assignment_on_pointers,
-    frontend::tokens::MsContext,
+    ms::MsContext,
     native::instructions::{Either, NodeResult},
 };
 
@@ -294,5 +294,13 @@ impl MsEnumType {
         if !found_variant {
             panic!("undefiend variant {} on type {:?}", variant_name, self);
         }
+    }
+
+    pub fn to_abi_param(&self) -> AbiParam {
+        AbiParam::new(types::I64)
+    }
+
+    pub fn to_cl_type(&self) -> types::Type {
+        types::I64
     }
 }

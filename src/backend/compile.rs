@@ -10,15 +10,15 @@ use mantis_expression::pratt::{Block, Declaration, FunctionDecl, Type};
 
 use crate::{
     backend::compile_function::TraitFunctionFor,
-    frontend::tokens::MsContext,
+    ms::MsContext,
     registries::{
         functions::MsFunctionRegistry,
         modules::{resolve_module_by_word, MsResolved},
-        types::{MsGenericTemplate, MsTypeRegistry},
+        types::{MsGenericTemplate, MsTypeRegistry, TypeNameWithGenerics},
     },
 };
 
-use super::compile_function::compile_function;
+use super::compile_function::{compile_function, random_string};
 
 pub fn resolve_type_term(ty: &Type, ms_ctx: &MsContext) {
     match ty {
@@ -57,6 +57,7 @@ pub fn compile_binary(
                     &mut fbx,
                     &mut ms_ctx,
                     None,
+                    None,
                 );
             }
             Declaration::Type(name, ty) => {
@@ -77,8 +78,7 @@ pub fn compile_binary(
                             .insert(key.into(), template.clone());
                     }
                     Type::Word(word_span) => {
-                        if let Some(MsResolved::Type(resolved)) =
-                            ms_ctx.current_module.resolve(&ty, None)
+                        if let Some(MsResolved::Type(resolved)) = ms_ctx.current_module.resolve(&ty)
                         {
                             let alias = word_span.as_str();
                             ms_ctx
@@ -116,30 +116,31 @@ pub fn compile_binary(
                 // todo!("add traits to ms_context");
             }
             Declaration::TraitImpl(trait_decl, ty) => {
-                let ty = ms_ctx
+                let ty = ms_ctx.current_module.resolve(&ty).unwrap().ty().unwrap();
+                ms_ctx
                     .current_module
-                    .resolve(&ty, None)
-                    .unwrap()
-                    .ty()
-                    .unwrap();
+                    .add_alias(TypeNameWithGenerics::new("Self".into(), vec![]), ty.clone());
 
                 let trait_name = trait_decl.name.word().unwrap();
                 let mut fn_registry = MsFunctionRegistry::default();
 
-                ms_ctx.current_module.type_registry.add_alias("Self", ty.id);
+                // ms_ctx.current_module.type_registry.add_alias("Self", ty.id);
 
                 for function in trait_decl.functions {
                     let trait_fn_for = TraitFunctionFor {
                         trait_name,
                         on_type: &ty,
                     };
-                    compile_function(
+
+                    let fn_name = random_string(24);
+                    let decl = compile_function(
                         function,
                         &mut module,
                         &mut ctx,
                         &mut fbx,
                         &mut ms_ctx,
                         Some(trait_fn_for),
+                        Some(&fn_name),
                     );
                 }
             }

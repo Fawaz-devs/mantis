@@ -8,7 +8,8 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use crate::{
-    frontend::tokens::{MsClScope, MsClScopeType, MsContext, MsScopeType},
+    frontend::tokens::{MsClScope, MsClScopeType, MsScopeType},
+    ms::MsContext,
     registries::variable::{MsVar, MsVarRegistry},
 };
 
@@ -62,13 +63,13 @@ impl MsVarScopes {
 }
 
 pub fn drop_scope(
-    reg: MsVarRegistry,
+    reg: &MsVarRegistry,
     ctx: &MsContext,
     fbx: &mut FunctionBuilder,
     module: &mut ObjectModule,
 ) {
-    for var_name in reg.stack.into_iter().rev() {
-        let var = reg.registry.get(&var_name).unwrap();
+    for var_name in reg.stack.iter().rev() {
+        let var = reg.registry.get(var_name).unwrap();
         if !var.is_reference {
             drop_variable(var, ctx, fbx, module);
             log::info!("Dropped {} of type: {}", var_name, var.ty_id);
@@ -83,7 +84,11 @@ pub fn drop_variable(
     module: &mut ObjectModule,
 ) {
     let v = var;
-    if let Some(drop_trait) = ctx.trait_registry.find_trait_for("Drop", v.ty_id) {
+    if let Some(drop_trait) = ctx
+        .current_module
+        .trait_registry
+        .find_trait_for("Drop", v.ty_id)
+    {
         let function = drop_trait.registry.get("drop").expect(&format!(
             "missing fn drop(self @mut Self); for {:?}",
             v.ty_id
@@ -91,6 +96,20 @@ pub fn drop_variable(
         let func_ref = module.declare_func_in_func(function.func_id, fbx.func);
         let val = fbx.use_var(v.c_var);
         let _ = fbx.ins().call(func_ref, &[val]);
+    }
+}
+
+pub fn drop_scopes_until_index(
+    scope_index: usize,
+    ctx: &MsContext,
+    fbx: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+) {
+    for (idx, scope) in ctx.var_scopes.scopes.iter().enumerate().rev() {
+        if idx <= scope_index {
+            break;
+        }
+        drop_scope(scope, ctx, fbx, module);
     }
 }
 
@@ -180,6 +199,7 @@ pub struct MsLoopScope {
     pub name: Option<Box<str>>,
     pub entry_block: Block,
     pub exit_block: Block,
+    pub var_scope_index: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -188,11 +208,17 @@ pub struct MsLoopScopes {
 }
 
 impl MsLoopScopes {
-    pub fn new_loop(&mut self, name: Option<Box<str>>, fbx: &mut FunctionBuilder) -> &MsLoopScope {
+    pub fn new_loop(
+        &mut self,
+        name: Option<Box<str>>,
+        fbx: &mut FunctionBuilder,
+        var_scope_index: usize,
+    ) -> &MsLoopScope {
         let scope = MsLoopScope {
             name,
             entry_block: fbx.create_block(),
             exit_block: fbx.create_block(),
+            var_scope_index,
         };
 
         fbx.ins().jump(scope.entry_block, &[]);
