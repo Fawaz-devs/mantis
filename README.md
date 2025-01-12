@@ -13,13 +13,48 @@ Are we there yet? Not even close
 What's supported?
 
 - Everything is unstable
-- But Can import functions from glibc or any other libaries if needed
-- C String supported (broken again)
-- Loops that require manual "continue", otherwise just are regular blocks
+- But Can import functions from libc or any other libaries if needed
 
 
 TODO:
-- Make Loop loop without manual continue keyword
-- Structs
 - Generics
 - Borrow Checker
+- Function Templates
+- Trait Templates
+
+
+## Example Hello World
+
+```
+
+type MyStruct = struct {
+  name String,
+}
+
+type MyEnum = enum {
+  None,
+  MyStruct(MyStruct),
+}
+
+
+
+fn main() {
+  let s = "Hello World";
+  println(s);
+
+  let my_string = String.fromStr(s);
+  let my_enum = MyEnum.MyStruct(my_string);
+
+  if MyEnum.MyStruct(ms) = my_enum {
+    print("My Enum has My Struct ");
+    println(ms.as_str());
+  } else {
+    println("My Enum doesn't have My Struct");
+  }
+
+  
+}
+
+
+  
+```

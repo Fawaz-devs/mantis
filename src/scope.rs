@@ -83,6 +83,11 @@ pub fn drop_variable(
     fbx: &mut FunctionBuilder,
     module: &mut ObjectModule,
 ) {
+    if ctx.disable_auto_drop {
+        log::warn!("Auto Drop (RAII) is disabled, make sure to clean up your variables manually");
+        return;
+    }
+
     let v = var;
     if let Some(drop_trait) = ctx
         .current_module

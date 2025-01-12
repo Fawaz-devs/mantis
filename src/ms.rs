@@ -18,6 +18,7 @@ pub struct MsContext {
     pub var_scopes: MsVarScopes,
     pub loop_scopes: MsLoopScopes,
     pub current_module: MsModule,
+    pub disable_auto_drop: bool,
 }
 
 impl MsContext {
@@ -27,6 +28,7 @@ impl MsContext {
             variable_index: offset,
             var_scopes: Default::default(),
             loop_scopes: Default::default(),
+            disable_auto_drop: false,
         }
     }
 
