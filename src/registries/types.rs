@@ -538,6 +538,13 @@ impl Hash for MsType {
 }
 
 impl MsType {
+    pub fn enum_ty(&self) -> Option<Rc<MsEnumType>> {
+        match self {
+            MsType::Enum(enum_ty) => Some(enum_ty.clone()),
+            _ => None,
+        }
+    }
+
     pub fn native(&self) -> Option<MsNativeType> {
         match self {
             MsType::Native(ms_native_type) => Some(*ms_native_type),
