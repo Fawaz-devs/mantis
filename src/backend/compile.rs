@@ -12,7 +12,7 @@ use crate::{
     backend::compile_function::TraitFunctionFor,
     ms::MsContext,
     registries::{
-        functions::MsFunctionRegistry,
+        functions::{MsFunctionRegistry, MsGenericFunction},
         modules::{resolve_module_by_word, MsResolved},
         types::{MsGenericTemplate, MsTypeRegistry, TypeNameWithGenerics},
     },
@@ -116,33 +116,72 @@ pub fn compile_binary(
                 // todo!("add traits to ms_context");
             }
             Declaration::TraitImpl(trait_decl, ty) => {
-                let ty = ms_ctx.current_module.resolve(&ty).unwrap().ty().unwrap();
-                ms_ctx
-                    .current_module
-                    .add_alias(TypeNameWithGenerics::new("Self".into(), vec![]), ty.clone());
+                if trait_decl.generics.is_empty() {
+                    let ty = ms_ctx.current_module.resolve(&ty).unwrap().ty().unwrap();
+                    ms_ctx
+                        .current_module
+                        .add_alias(TypeNameWithGenerics::new("Self".into(), vec![]), ty.clone());
 
-                let trait_name = trait_decl.name.word().unwrap();
-                let mut fn_registry = MsFunctionRegistry::default();
+                    let trait_name = trait_decl.name.word().unwrap();
+                    let mut fn_registry = MsFunctionRegistry::default();
 
-                // ms_ctx.current_module.type_registry.add_alias("Self", ty.id);
+                    for function in trait_decl.functions {
+                        let trait_fn_for = TraitFunctionFor {
+                            trait_name,
+                            on_type: &ty,
+                        };
 
-                for function in trait_decl.functions {
-                    let trait_fn_for = TraitFunctionFor {
-                        trait_name,
-                        on_type: &ty,
-                    };
+                        let fn_name = random_string(24);
+                        let decl = compile_function(
+                            function,
+                            &mut module,
+                            &mut ctx,
+                            &mut fbx,
+                            &mut ms_ctx,
+                            Some(trait_fn_for),
+                            Some(&fn_name),
+                        );
+                    }
+                } else {
+                    let mut generics = Vec::new();
+                    for function in trait_decl.functions {
+                        let func_name: Box<str> = function.name.word().unwrap().into();
+                        let template = MsGenericFunction {
+                            decl: Rc::new(function),
+                            generics: generics.clone(),
+                        };
 
-                    let fn_name = random_string(24);
-                    let decl = compile_function(
-                        function,
-                        &mut module,
-                        &mut ctx,
-                        &mut fbx,
-                        &mut ms_ctx,
-                        Some(trait_fn_for),
-                        Some(&fn_name),
-                    );
+                        let ty_name = ty.word().unwrap();
+
+                        let registry = if let Some(registry) = ms_ctx
+                            .current_module
+                            .trait_generic_templates
+                            .registry
+                            .get_mut(ty_name)
+                        {
+                            registry
+                        } else {
+                            ms_ctx
+                                .current_module
+                                .trait_generic_templates
+                                .registry
+                                .insert(ty_name.into(), Default::default());
+
+                            ms_ctx
+                                .current_module
+                                .trait_generic_templates
+                                .registry
+                                .get_mut(ty_name)
+                                .unwrap()
+                        };
+
+                        registry.push(template);
+                    }
+
+                    // it is a trait template
+                    todo!("Trait Template registration");
                 }
+                ms_ctx.current_module.clear_aliases();
             }
         }
     }

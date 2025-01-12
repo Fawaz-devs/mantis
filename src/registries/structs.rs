@@ -303,4 +303,35 @@ impl MsEnumType {
     pub fn to_cl_type(&self) -> types::Type {
         types::I64
     }
+
+    pub fn get_tag_index(&self, variant_name: &str) -> Option<usize> {
+        for (i, (var_name, _)) in self.variants.iter().enumerate() {
+            let vname: &str = var_name;
+            if vname == variant_name {
+                return Some(i);
+            }
+        }
+
+        return None;
+    }
+
+    pub fn get_tag(
+        &self,
+        ptr: cranelift::prelude::Value,
+        fbx: &mut FunctionBuilder,
+    ) -> cranelift::prelude::Value {
+        fbx.ins().load(types::I64, MemFlags::new(), ptr, 0)
+    }
+
+    pub fn get_inner_ptr(
+        &self,
+        ptr: cranelift::prelude::Value,
+        fbx: &mut FunctionBuilder,
+    ) -> cranelift::prelude::Value {
+        fbx.ins().iadd_imm(ptr, 8)
+    }
+
+    pub fn get_inner_ty(&self, variant_name: &str) -> Option<MsTypeWithId> {
+        self.variants.get(variant_name).cloned()?
+    }
 }

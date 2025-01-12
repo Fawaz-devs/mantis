@@ -25,13 +25,13 @@ type Vec[T] = struct {
 }
 
 
-impl Drop for Vec[T] {
+impl[T] Drop for Vec[T] {
     fn drop(self @mut Self) {
         free(self.slice.pointer);
     }
 }
 
-impl Self for Vec[T] {
+impl[T] Self for Vec[T] {
     fn with_capacity(cap u64) Self {
         if cap > 0 {
             return Self {

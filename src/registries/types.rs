@@ -394,7 +394,9 @@ impl TypeNameWithGenerics {
                 name: word_span.as_str().into(),
                 generics: Vec::new(),
             },
-            _ => return None,
+            _ => {
+                return None;
+            }
         };
 
         Some(ty)
@@ -608,7 +610,7 @@ impl MsType {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MsTypeId(usize);
+pub struct MsTypeId(u32);
 
 impl Display for MsTypeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -679,19 +681,22 @@ impl MsTypeNameRegistry {
     pub fn with_default_types() -> Self {
         let mut registry = Self {
             map: Default::default(),
-            // inner: Default::default(),
             inner_map: Default::default(),
         };
 
-        registry.add_type("i8", MsType::Native(MsNativeType::I8));
         registry.add_type("i16", MsType::Native(MsNativeType::I16));
         registry.add_type("i32", MsType::Native(MsNativeType::I32));
         registry.add_type("i64", MsType::Native(MsNativeType::I64));
         registry.add_type("u8", MsType::Native(MsNativeType::U8));
-        registry.add_type("u32", MsType::Native(MsNativeType::U32));
+        registry.add_type("u16", MsType::Native(MsNativeType::U16));
         registry.add_type("u64", MsType::Native(MsNativeType::U64));
         registry.add_type("f32", MsType::Native(MsNativeType::F32));
         registry.add_type("f64", MsType::Native(MsNativeType::F64));
+
+        let u32_ty = registry.add_type("u32", MsType::Native(MsNativeType::U32));
+        let i8_ty = registry.add_type("i8", MsType::Native(MsNativeType::I8));
+        registry.add_alias("bool", i8_ty);
+        registry.add_alias("char", u32_ty);
 
         registry
     }
@@ -732,39 +737,6 @@ impl Default for MsTypeRegistry {
         registry.insert("u64".into(), MsType::Native(MsNativeType::U64));
         registry.insert("f32".into(), MsType::Native(MsNativeType::F32));
         registry.insert("f64".into(), MsType::Native(MsNativeType::F64));
-        // registry.insert("bool".into(), MsType::Native(MsNativeType::Bool));
-        // registry.insert("u16".into(), MsType::Native(MsNativeType::U16));
-        // registry.insert("array".into(), MsType::Struct(Rc::new(array_struct())));
-
-        // let pointer_ty = pointer_template();
-
-        {
-            // let mut generics = BTreeMap::new();
-            // generics.insert("T".into(), MsType::Native(MsNativeType::Void));
-            // registry.insert(
-            //     "pointer[void]".into(),
-            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            // );
-            // generics.insert("T".into(), MsType::Native(MsNativeType::I64));
-            // registry.insert(
-            //     "pointer[i64]".into(),
-            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            // );
-            // generics.insert("T".into(), MsType::Native(MsNativeType::F64));
-            // registry.insert(
-            //     "pointer[f64]".into(),
-            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            // );
-            // generics.insert("T".into(), MsType::Native(MsNativeType::U8));
-            // registry.insert(
-            //     "pointer[u8]".into(),
-            //     MsType::Struct(Rc::new(pointer_ty.to_struct(&generics))),
-            // );
-        }
-
-        // registry.insert("pointer".into(), MsType::Generic(Rc::new(pointer_ty)));
-
-        // registry.insert("str".into(), MsType::Native(MsNativeType::Array));
 
         Self { registry }
     }

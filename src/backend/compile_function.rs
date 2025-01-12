@@ -2,7 +2,9 @@ use crate::ms::MsContext;
 use crate::native::instructions::NodeResult;
 use crate::registries::functions::{FunctionType, MsDeclaredFunction};
 use crate::registries::modules::MsResolved;
-use crate::registries::types::{MsNativeType, MsType, MsTypeId, MsTypeWithId};
+use crate::registries::types::{
+    binary_cmp_op_to_condcode_intcc, MsNativeType, MsType, MsTypeId, MsTypeWithId,
+};
 use crate::registries::variable::{MsVal, MsVar};
 use crate::registries::MsRegistryExt;
 use crate::scope::{drop_scope, drop_variable};
@@ -463,11 +465,52 @@ pub fn compile_node(
                                 let variable_name = root.word().unwrap();
                                 let var = ms_ctx.var_scopes.find_variable(variable_name).unwrap();
                                 let ptr = var.value(fbx);
-
                                 let final_ptr = compile_nested_struct_field_to_ptr(
                                     ptr, var.ty_id, child, ms_ctx, fbx,
                                 );
-                                compile_assignment_on_pointers(final_ptr, rhs, module, fbx, ms_ctx);
+
+                                let ty = ms_ctx
+                                    .current_module
+                                    .type_registry
+                                    .get_from_type_id(final_ptr.ty())
+                                    .unwrap();
+                                // final_ptr.ty();
+
+                                match ty {
+                                    MsType::Struct(_) => {
+                                        compile_assignment_on_pointers(
+                                            final_ptr, rhs, module, fbx, ms_ctx,
+                                        );
+                                    }
+                                    MsType::Enum(enum_ty) => {
+                                        let op = binary_cmp_op_to_condcode_intcc(
+                                            BinaryOperation::EqualTo,
+                                            false,
+                                        );
+                                        let tag = enum_ty.get_tag(final_ptr.value(fbx), fbx);
+                                        let enum_variant_name: &str =
+                                            todo!("parse enum variant name for matching");
+                                        let expected_tag = enum_ty
+                                            .get_tag_index(enum_variant_name)
+                                            .expect(&format!(
+                                                "undefined enum variant {}",
+                                                enum_variant_name
+                                            ));
+
+                                        let value =
+                                            fbx.ins().icmp_imm(op, tag, expected_tag as i64);
+
+                                        let ty_id = ms_ctx
+                                            .current_module
+                                            .resolve_from_str("i8")
+                                            .unwrap()
+                                            .ty()
+                                            .unwrap();
+
+                                        return Some(NodeResult::Val(MsVal::new(ty_id.id, value)));
+                                    }
+                                    _ => unreachable!(),
+                                }
                             }
                             _ => unreachable!(),
                         };
@@ -562,11 +605,8 @@ pub fn compile_node(
                             .get(&var.ty_id)
                             .unwrap();
                         let func = reg.registry.get(method_name).unwrap();
-
                         method_on_variable = Some(var.clone());
-
                         func.clone()
-                        // let var_ty = ms_ctx.current_module.type_registry.get_from_type_id(var.ty_id).unwrap();
                     } else {
                         let Some(MsResolved::Function(func)) =
                             ms_ctx.current_module.resolve(fn_name)
@@ -577,14 +617,30 @@ pub fn compile_node(
                         func
                     }
                 }
-                _ => {
-                    let Some(MsResolved::Function(func)) = ms_ctx.current_module.resolve(fn_name)
-                    else {
-                        panic!("couldn't find function {:?}", fn_name);
-                    };
+                _ => match ms_ctx.current_module.resolve(fn_name).unwrap() {
+                    MsResolved::Function(func) => func,
+                    MsResolved::EnumUnwrap(enum_ty, variant_name) => {
+                        let MsType::Enum(enum_ty) = enum_ty.ty else {
+                            unreachable!()
+                        };
+                        assert!(args.len() == 1);
+                        let variant_type = enum_ty.get_inner_ty(&variant_name).unwrap();
+                        let arg = args.first().unwrap();
+                        if let Node::Term(Term::Type(MsTokenType::Word(var_name))) = arg {
+                            let c_var = ms_ctx.new_variable();
+                            let var = MsVar::new(variant_type.id, c_var, true, false);
+                            todo!("either move this enum unwrapping to assignment handling, since it requires left and right values");
+                            // let ptr = enum_ty.get_inner_ptr(, )
+                            // fbx.def_var(var, );
+                            // ms_ctx.var_scopes.add_variable(var_name.as_str(), var);
+                        } else {
+                            unreachable!();
+                        }
 
-                    func
-                }
+                        return None;
+                    }
+                    _ => unreachable!(),
+                },
             };
 
             let mut call_arg_values = Vec::with_capacity(args.len());
@@ -1069,8 +1125,6 @@ pub fn compile_loop(
     let loop_name = loop_name.as_ref().map(|x| x.as_str());
     ms_ctx.var_scopes.new_scope();
     ms_ctx.new_loop_scope(loop_name.map(|x| x.into()), fbx);
-    // .loop_scopes
-    // .new_loop(loop_name.map(|x| x.into()), fbx);
 
     compile_block(loop_block, module, fbx, ms_ctx);
 
@@ -1145,9 +1199,6 @@ impl IfElseChainBuilder {
         if inst.is_none() {
             fbx.ins().jump(end_block, &[]);
         }
-        // if compile_block(&block.block, module, fbx, ms_ctx).is_none() {
-        //     fbx.ins().jump(end_block, &[]);
-        // }
         fbx.seal_block(if_block);
     }
 
@@ -1160,19 +1211,13 @@ impl IfElseChainBuilder {
     ) {
         let else_block = self.else_block.take().unwrap();
         fbx.switch_to_block(else_block);
-
         ms_ctx.var_scopes.new_scope();
-
         let inst = compile_block(&block, module, fbx, ms_ctx);
         let scope = ms_ctx.var_scopes.exit_scope().unwrap();
         drop_scope(&scope, ms_ctx, fbx, module);
         if inst.is_none() {
             fbx.ins().jump(self.end_block, &[]);
         }
-
-        // if compile_block(&block, module, fbx, ms_ctx).is_none() {
-        //     fbx.ins().jump(self.end_block, &[]);
-        // }
         fbx.seal_block(else_block);
     }
 

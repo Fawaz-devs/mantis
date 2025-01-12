@@ -285,6 +285,7 @@ pub enum Declaration {
 pub struct TraitDecl {
     pub name: Type,
     pub functions: Vec<FunctionDecl>,
+    pub generics: Vec<WordSpan>,
 }
 
 fn get_pratt_parser() -> PrattParser<Rule> {
@@ -470,9 +471,21 @@ fn parse_trait_impl(
     src: &Rc<str>,
 ) -> (Type, TraitDecl) {
     let mut iter = primary.into_inner().into_iter();
-    let trait_name = parse_type(Pairs::single(iter.next().unwrap()), pratt, src);
-    let next = iter.next().unwrap();
 
+    let mut generics = Vec::<WordSpan>::new();
+    let mut next = iter.next().unwrap();
+    loop {
+        if next.as_rule() == Rule::word {
+            let word = WordSpan::from_span(next.as_span(), src);
+            generics.push(word);
+            next = iter.next().unwrap();
+        } else {
+            break;
+        }
+    }
+
+    let trait_name = parse_type(Pairs::single(next), pratt, src);
+    next = iter.next().unwrap();
     let mut functions = Vec::new();
     let for_type = if matches!(next.as_rule(), Rule::type_name) {
         parse_type(Pairs::single(next), pratt, src)
@@ -489,6 +502,7 @@ fn parse_trait_impl(
         TraitDecl {
             name: trait_name,
             functions,
+            generics,
         },
     )
 }
@@ -506,6 +520,7 @@ fn parse_trait_decl(
     TraitDecl {
         name: trait_name,
         functions,
+        generics: Vec::new(),
     }
 }
 

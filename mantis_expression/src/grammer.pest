@@ -70,7 +70,9 @@ COMMENT = _{  "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
       declaration = _{ fn_decl | type_decl | use_decl | trait_decl | trait_impl }
       declarations = { declaration* }
       trait_decl = { "trait" ~ type_name ~ "{" ~ fn_decl* ~ "}" }
-      trait_impl = { "impl" ~ type_name ~ ( "for" ~ type_name )? ~ "{" ~ fn_decl* ~ "}" }
+
+      generic_list = _{ "[" ~ word ~ ("," ~ word)* ~ "]" }
+      trait_impl = { "impl" ~ generic_list? ~ type_name ~ ( "for" ~ type_name )? ~ "{" ~ fn_decl* ~ "}" }
      
       string_literal = @{ "\"" ~ ( "\"\"" | (!"\"" ~ ANY) )* ~ "\"" }
       char = @{ "'" ~ ANY ~ "'" }

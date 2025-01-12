@@ -109,8 +109,11 @@ impl MsTraitRegistry {
     }
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct MsGenericFunction {}
+#[derive(Debug, Clone)]
+pub struct MsGenericFunction {
+    pub decl: Rc<FunctionDecl>,
+    pub generics: Vec<Box<str>>,
+}
 impl MsGenericFunction {
     pub(crate) fn generate(&self, real_types: Vec<super::modules::MsResolved>) -> FunctionDecl {
         todo!()
@@ -125,4 +128,9 @@ pub struct MsFunctionTemplates {
 #[derive(Default, Debug)]
 pub struct MsTraitTemplates {
     pub registry: HashMap<Box<str>, Vec<FunctionDecl>>,
+}
+
+#[derive(Default, Debug)]
+pub struct MsTraitGenericTemplates {
+    pub registry: HashMap<Box<str>, Vec<MsGenericFunction>>,
 }

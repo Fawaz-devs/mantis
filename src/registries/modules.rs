@@ -16,8 +16,8 @@ use crate::{
 
 use super::{
     functions::{
-        MsDeclaredFunction, MsFunctionRegistry, MsFunctionTemplates, MsTraitRegistry,
-        MsTraitTemplates,
+        MsDeclaredFunction, MsFunctionRegistry, MsFunctionTemplates, MsTraitGenericTemplates,
+        MsTraitRegistry, MsTraitTemplates,
     },
     types::{
         EnumWithGenerics, MsGenericTemplate, MsGenericTemplateInner, MsType, MsTypeId,
@@ -39,8 +39,9 @@ pub struct MsModule {
     pub type_registry: MsTypeNameRegistry,
     pub type_templates: MsTypeTemplates,
     pub type_fn_registry: MsTypeFunctionRegistry,
+    pub trait_generic_templates: MsTraitGenericTemplates,
     pub submodules: HashMap<Box<str>, MsModule>,
-    aliased_types: HashMap<TypeNameWithGenerics, MsTypeWithId>,
+    pub aliased_types: HashMap<TypeNameWithGenerics, MsTypeWithId>,
 }
 
 #[derive(Debug, Default)]
@@ -66,6 +67,7 @@ pub enum MsResolved {
     Type(MsTypeWithId),
     TypeRef(MsTypeWithId, bool),
     Generic(Rc<MsGenericTemplate>),
+    EnumUnwrap(MsTypeWithId, Box<str>), // enum_ty and variant name
 }
 
 impl MsResolved {
@@ -89,6 +91,10 @@ impl MsModule {
 
     pub fn add_alias(&mut self, alias_name: TypeNameWithGenerics, alias_type: MsTypeWithId) {
         assert!(self.aliased_types.insert(alias_name, alias_type).is_none())
+    }
+
+    pub fn resolve_from_str(&mut self, type_name: &str) -> Option<MsResolved> {
+        self.resolve(&Type::Word(type_name.into()))
     }
 
     pub fn resolve(&mut self, type_name: &Type) -> Option<MsResolved> {
@@ -121,9 +127,8 @@ impl MsModule {
                                 real_types.insert(generic_name.as_str().into(), real_ty);
                             }
                         }
-
+                        dbg!(&real_types);
                         let generated_type = template.generate(&real_types, self);
-
                         return Some(MsResolved::Type(generated_type));
                     }
                     if let Some(template) = self.fn_templates.registry.get(key.as_str()).cloned() {
@@ -150,9 +155,20 @@ impl MsModule {
             }
             Type::Nested(root, child) => {
                 if let Some(MsResolved::Type(ty)) = self.resolve(root) {
-                    let self_traits = self.trait_registry.registry.get("Self")?;
-                    let registry = self_traits.get(&ty.id)?;
-                    let func = registry.registry.get(child.word().unwrap())?;
+                    // let self_traits = self.trait_registry.registry.get("Self")?;
+                    match &ty.ty {
+                        MsType::Enum(enum_ty) => {
+                            let variant_name = child.word()?;
+                            return Some(MsResolved::EnumUnwrap(ty, variant_name.into()));
+                        }
+                        _ => {}
+                    }
+                    let func = self
+                        .type_fn_registry
+                        .map
+                        .get(&ty.id)?
+                        .registry
+                        .get(child.word()?)?;
                     return Some(MsResolved::Function(func.clone()));
                 }
 
@@ -187,7 +203,7 @@ impl MsModule {
 
             _ => unreachable!("unhandled {:?}", type_name),
         };
-        return None;
+        // return None;
     }
 
     pub fn resolve_with_generics(
@@ -245,8 +261,7 @@ impl MsModule {
                 for (variant_name, fields) in fields {
                     let argument = fields
                         .first()
-                        .map(|x| TypeNameWithGenerics::from_type(x))
-                        .unwrap();
+                        .and_then(|x| TypeNameWithGenerics::from_type(x));
 
                     map.insert(variant_name.as_str().into(), argument);
                 }
