@@ -60,6 +60,15 @@ impl MsVarScopes {
         last_scope.stack.push(var_name);
         None
     }
+
+    pub fn remove_variable(&mut self, name: &str) -> Option<MsVar> {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(var) = scope.registry.remove(name) {
+                return Some(var);
+            }
+        }
+        return None;
+    }
 }
 
 pub fn drop_scope(
@@ -69,7 +78,9 @@ pub fn drop_scope(
     module: &mut ObjectModule,
 ) {
     for var_name in reg.stack.iter().rev() {
-        let var = reg.registry.get(var_name).unwrap();
+        let Some(var) = reg.registry.get(var_name) else {
+            continue;
+        };
         if !var.is_reference {
             drop_variable(var, ctx, fbx, module);
             log::info!("Dropped {} of type: {}", var_name, var.ty_id);
@@ -85,6 +96,10 @@ pub fn drop_variable(
 ) {
     if ctx.disable_auto_drop {
         log::warn!("Auto Drop (RAII) is disabled, make sure to clean up your variables manually");
+        return;
+    }
+
+    if var.is_reference {
         return;
     }
 

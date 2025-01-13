@@ -56,6 +56,12 @@ struct Args {
     #[arg(long, short, help = "compile and run")]
     run: bool,
 
+    #[arg(
+        long,
+        help = "RAII, Or Auto Drop very unstable, by default is disabled, enable it with this flag"
+    )]
+    auto_drop: bool,
+
     #[arg(trailing_var_arg = true)]
     run_args: Vec<String>,
 }
@@ -113,9 +119,13 @@ fn handle0(args: Args) {
     if let Some(obj_file_path) = args.obj {
         {
             let start = std::time::Instant::now();
-            let bytes =
-                backend::compile::compile_binary(declarations, include_dirs, &args.module_name)
-                    .unwrap();
+            let bytes = backend::compile::compile_binary(
+                declarations,
+                include_dirs,
+                &args.module_name,
+                args.auto_drop,
+            )
+            .unwrap();
             // let bytes = compiler::ms_compile(fns, sr, fr).unwrap();
             let seconds = start.elapsed().as_secs_f64();
             std::fs::write(&obj_file_path, &bytes).unwrap();

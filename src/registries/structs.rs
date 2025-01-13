@@ -3,10 +3,14 @@ use std::{
     rc::Rc,
 };
 
-use cranelift::prelude::{
-    isa::TargetFrontendConfig, types, AbiParam, FunctionBuilder, InstBuilder, MemFlags,
+use cranelift::{
+    codegen::ir::StackSlot,
+    prelude::{
+        isa::TargetFrontendConfig, types, AbiParam, FunctionBuilder, InstBuilder, MemFlags,
+        StackSlotData,
+    },
 };
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::{DataDescription, FuncOrDataId, Linkage, Module};
 use cranelift_object::ObjectModule;
 use linear_map::LinearMap;
 
@@ -46,6 +50,13 @@ impl MsStructType {
         } else {
             self.size + (8 - self.size % 8)
         }
+    }
+
+    pub fn create_stack_slot(&mut self, fbx: &mut FunctionBuilder) -> StackSlot {
+        fbx.create_sized_stack_slot(StackSlotData::new(
+            cranelift::prelude::StackSlotKind::ExplicitSlot,
+            self.size() as u32,
+        ))
     }
 
     pub fn add_field(&mut self, field_name: impl Into<Box<str>>, field_type: MsTypeWithId) {
@@ -232,6 +243,20 @@ impl MsStructType {
 //     return st;
 // }
 
+pub fn call_memcpy(
+    module: &mut ObjectModule,
+    fbx: &mut FunctionBuilder,
+    dest: cranelift::prelude::Value,
+    src: cranelift::prelude::Value,
+    size: cranelift::prelude::Value,
+) {
+    let Some(FuncOrDataId::Func(func)) = module.get_name("memcpy") else {
+        unreachable!();
+    };
+    let func_ref = module.declare_func_in_func(func, fbx.func);
+    fbx.ins().call(func_ref, &[dest, src, size]);
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MsEnumType {
     variants: LinearMap<Box<str>, Option<MsTypeWithId>>,
@@ -239,6 +264,13 @@ pub struct MsEnumType {
 }
 
 impl MsEnumType {
+    pub fn create_stack_slot(&mut self, fbx: &mut FunctionBuilder) -> StackSlot {
+        fbx.create_sized_stack_slot(StackSlotData::new(
+            cranelift::prelude::StackSlotKind::ExplicitSlot,
+            self.size() as u32,
+        ))
+    }
+
     pub fn add_variant(
         &mut self,
         variant_name: impl Into<Box<str>>,
@@ -333,5 +365,17 @@ impl MsEnumType {
 
     pub fn get_inner_ty(&self, variant_name: &str) -> Option<MsTypeWithId> {
         self.variants.get(variant_name).cloned()?
+    }
+
+    pub fn copy(
+        &self,
+        dest: cranelift::prelude::Value,
+        src: cranelift::prelude::Value,
+        fbx: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ms_ctx: &mut MsContext,
+    ) {
+        let size = fbx.ins().iconst(types::I64, self.size() as i64);
+        call_memcpy(module, fbx, dest, src, size);
     }
 }

@@ -119,7 +119,9 @@ trait Drop {
 
 impl Drop for String {
     fn drop(self @mut Self) {
-        free(self.slice.pointer);
+        if self.slice.pointer != 0 {
+            free(self.slice.pointer);
+        }
     }
 }
 
@@ -153,24 +155,22 @@ impl Self for String {
         new_string.slice.len = self.slice.len;
         self = new_string;
     }
-    
-    fn push(self @mut String, c i8) {
-        if self.capacity < self.slice.len + 1 {
-            self.grow((self.capacity + 1) * 2);
-        } 
-        *(self.slice.pointer + self.slice.len) = c;
-        let s = self.slice;
-        s.len = s.len + 1;
-    }
 
     fn push_str(self @mut String, s StrSlice) {
-   
         if self.capacity < (self.slice.len + s.len) {
             self.grow((self.slice.len + s.len) * 2);
         } 
-        
         memcpy(self.slice.pointer + self.slice.len, s.pointer, s.len);
         self.slice.len = (self.slice.len + s.len);
+    }
+
+    fn push_byte(self @mut String, c i8) {
+        if self.capacity < (self.slice.len + 1) {
+            self.grow((self.slice.len + 1) * 2);
+        } 
+        (self.slice.len + self.slice.pointer) = c;
+        self.slice.len = (self.slice.len + 1);
+        
     }
 
     fn truncate(self @mut String, new_len u64) {
@@ -199,6 +199,11 @@ fn main(argc i32, argv i64) i32 {
     string_test.push_str(s);
     string_test.push_str(s);
     string_test.push_str(s);
+    string_test.push_byte('h' as i8);
+    string_test.push_byte('e' as i8);
+    string_test.push_byte('l' as i8);
+    string_test.push_byte('l' as i8);
+    string_test.push_byte('0' as i8);
 
     println(string_test.slice);
 

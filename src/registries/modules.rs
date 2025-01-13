@@ -56,7 +56,12 @@ impl MsTypeFunctionRegistry {
         fn_name: impl Into<Box<str>>,
         func: Rc<MsDeclaredFunction>,
     ) {
-        let ty = self.map.get_mut(&ty).unwrap();
+        let ty = if let Some(ty) = self.map.get_mut(&ty) {
+            ty
+        } else {
+            self.map.insert(ty.clone(), Default::default());
+            self.map.get_mut(&ty).unwrap()
+        };
         ty.add_function(fn_name, func);
     }
 }

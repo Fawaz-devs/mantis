@@ -301,7 +301,12 @@ pub fn compile_assignment(
         panic!("{lhs} is marked immutable");
     }
 
-    assert!(variable.ty_id == rhs.ty());
+    assert!(
+        variable.ty_id == rhs.ty(),
+        "{} are not equal types {}",
+        variable.ty_id,
+        rhs.ty()
+    );
 
     let ty = ms_ctx
         .current_module
@@ -315,8 +320,9 @@ pub fn compile_assignment(
         }
         MsType::Struct(sty) => {
             // TODO: drop the old struct
-            drop_variable(variable, ms_ctx, fbx, module);
-
+            let mut dropping_var = variable.clone();
+            dropping_var.is_reference = false;
+            drop_variable(&dropping_var, ms_ctx, fbx, module);
             let dest = variable.value(fbx);
             let src = rhs.value(fbx);
             sty.copy(dest, src, fbx, module, ms_ctx);
@@ -347,6 +353,11 @@ pub fn compile_assignment_on_pointers(
             let dest = lhs.value(fbx);
             let src = rhs.value(fbx);
             sty.copy(dest, src, fbx, module, ms_ctx);
+        }
+        MsType::Enum(ety) => {
+            let dest = lhs.value(fbx);
+            let src = rhs.value(fbx);
+            ety.copy(dest, src, fbx, module, ms_ctx);
         }
         _ => todo!(),
     }
@@ -453,12 +464,27 @@ pub fn compile_node(
             } else if matches!(rule, Rule::assign) {
                 // TODO: Check for enum unwrapping
 
+                log::info!("Assignment Operation {:?} = {:?}", lhs, rhs);
+
                 match lhs.deref() {
                     Node::Term(Term::Type(term)) => {
                         match term {
                             MsTokenType::Word(word_span) => {
-                                let variable_name = term.word().unwrap();
-                                let rhs = compile_node(rhs, module, fbx, ms_ctx).unwrap();
+                                let variable_name = word_span.as_str();
+                                let rhs = if let Node::Term(Term::Type(MsTokenType::Word(
+                                    rhs_var_name,
+                                ))) = rhs.deref()
+                                {
+                                    let var = ms_ctx
+                                        .var_scopes
+                                        .remove_variable(rhs_var_name.as_str())
+                                        .unwrap();
+                                    NodeResult::Var(var)
+                                } else {
+                                    compile_node(rhs, module, fbx, ms_ctx).unwrap()
+                                };
+
+                                // let rhs = compile_node(rhs, module, fbx, ms_ctx).unwrap();
                                 compile_assignment(&variable_name, rhs, module, fbx, ms_ctx);
                             }
                             MsTokenType::Nested(root, child) => {
@@ -476,40 +502,14 @@ pub fn compile_node(
                                     .unwrap();
 
                                 match ty {
-                                    MsType::Struct(_) | MsType::Enum(_) => {
+                                    MsType::Struct(_) | MsType::Enum(_) | MsType::Native(_) => {
                                         let rhs = compile_node(rhs, module, fbx, ms_ctx).unwrap();
+
                                         compile_assignment_on_pointers(
                                             final_ptr, rhs, module, fbx, ms_ctx,
                                         );
                                     }
-                                    // MsType::Enum(enum_ty) => {
-                                    //     let op = binary_cmp_op_to_condcode_intcc(
-                                    //         BinaryOperation::EqualTo,
-                                    //         false,
-                                    //     );
-                                    //     let tag = enum_ty.get_tag(final_ptr.value(fbx), fbx);
-                                    //     let enum_variant_name: &str =
-                                    //         todo!("parse enum variant name for matching");
-                                    //     let expected_tag = enum_ty
-                                    //         .get_tag_index(enum_variant_name)
-                                    //         .expect(&format!(
-                                    //             "undefined enum variant {}",
-                                    //             enum_variant_name
-                                    //         ));
-
-                                    //     let value =
-                                    //         fbx.ins().icmp_imm(op, tag, expected_tag as i64);
-
-                                    //     let ty_id = ms_ctx
-                                    //         .current_module
-                                    //         .resolve_from_str("bool")
-                                    //         .unwrap()
-                                    //         .ty()
-                                    //         .unwrap();
-
-                                    //     return Some(NodeResult::Val(MsVal::new(ty_id.id, value)));
-                                    // }
-                                    _ => unreachable!(),
+                                    _ => unreachable!("{:?}", ty),
                                 }
                             }
                             _ => unreachable!(),
@@ -591,7 +591,8 @@ pub fn compile_node(
                         let rval = rhs.value(fbx);
                         let value =
                             compile_binary_operation(op, lval, rval, nty, module, fbx, ms_ctx);
-                        value
+
+                        return Some(NodeResult::Val(MsVal::new(rhs.ty(), value)));
                     }
                     MsType::Struct(sty) => {
                         panic!("structs can't be used with == operator, use struct methods, StructType.equalTo(other StructType)");
@@ -605,29 +606,20 @@ pub fn compile_node(
 
                         let value =
                             compile_binary_operation(op, lval, rval, nty, module, fbx, ms_ctx);
-                        value
+
+                        let bool_ty = ms_ctx
+                            .current_module
+                            .resolve_from_str("bool")
+                            .unwrap()
+                            .ty()
+                            .unwrap();
+
+                        let value = NodeResult::Val(MsVal::new(bool_ty.id, value));
+
+                        return Some(value);
                     }
                     _ => unreachable!(),
                 };
-
-                // let nty = if let MsType::Native(nty) = ty {
-                //     nty
-                // } else {
-                //     MsNativeType::I64 // comparing ptr
-                // };
-                // let lval = lhs.value(fbx);
-                // let rval = rhs.value(fbx);
-                // let value = compile_binary_operation(op, lval, rval, nty, module, fbx, ms_ctx);
-                let bool_ty = ms_ctx
-                    .current_module
-                    .resolve_from_str("bool")
-                    .unwrap()
-                    .ty()
-                    .unwrap();
-
-                let value = NodeResult::Val(MsVal::new(bool_ty.id, value));
-
-                return Some(value);
             }
         }
         Node::Unary(rule, node) => {

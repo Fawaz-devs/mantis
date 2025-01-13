@@ -7,7 +7,7 @@ use mantis_expression::pratt::{FunctionDecl, WordSpan};
 use crate::frontend::tokens::MsFunctionDeclaration;
 
 use super::{
-    types::{MsType, MsTypeId},
+    types::{MsType, MsTypeId, TypeNameWithGenerics},
     MsRegistry, MsRegistryExt,
 };
 

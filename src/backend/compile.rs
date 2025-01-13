@@ -32,6 +32,7 @@ pub fn compile_binary(
     declarations: Vec<Declaration>,
     include_dirs: Vec<String>,
     module_name: &str,
+    auto_drop: bool,
 ) -> anyhow::Result<Vec<u8>> {
     let data_description = DataDescription::new();
     let mut flag_builder = settings::builder();
@@ -46,6 +47,7 @@ pub fn compile_binary(
     let mut fbx = FunctionBuilderContext::new();
     let mut ctx = module.make_context();
     let mut ms_ctx = MsContext::new(0);
+    ms_ctx.disable_auto_drop = !auto_drop;
 
     for declaration in declarations {
         match declaration {
@@ -151,13 +153,13 @@ pub fn compile_binary(
                             generics: generics.clone(),
                         };
 
-                        let ty_name = ty.word().unwrap();
+                        let ty_name = TypeNameWithGenerics::from_type(&ty).unwrap().name;
 
                         let registry = if let Some(registry) = ms_ctx
                             .current_module
                             .trait_generic_templates
                             .registry
-                            .get_mut(ty_name)
+                            .get_mut(&ty_name)
                         {
                             registry
                         } else {
@@ -165,13 +167,13 @@ pub fn compile_binary(
                                 .current_module
                                 .trait_generic_templates
                                 .registry
-                                .insert(ty_name.into(), Default::default());
+                                .insert(ty_name.clone(), Default::default());
 
                             ms_ctx
                                 .current_module
                                 .trait_generic_templates
                                 .registry
-                                .get_mut(ty_name)
+                                .get_mut(&ty_name)
                                 .unwrap()
                         };
 
@@ -179,7 +181,7 @@ pub fn compile_binary(
                     }
 
                     // it is a trait template
-                    todo!("Trait Template registration");
+                    // todo!("Trait Template registration");
                 }
                 ms_ctx.current_module.clear_aliases();
             }
