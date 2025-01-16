@@ -6,24 +6,21 @@ Rust inspired Memory safe flexible programming language
 - Optional Garbage Collection ( compatible with borrow checker )
 - Optional Smart Referencing, compiler automatically chooses a variable to be ref counted or owned or garbage collected
 - High Level and Low Level differentiation ( modify the compiler itself for special cases )
-- More flexible Lifetimes
+- More flexible and implicit Lifetimes
 
 Are we there yet? Not even close
 
 What's supported?
-
 - Everything is unstable
-- But Can import functions from libc or any other libaries if needed
 
 
 TODO:
-- Generics
 - Borrow Checker
 - Function Templates
 - Trait Templates
 
 
-## Example Hello World
+## Example
 
 ```
 
@@ -54,7 +51,11 @@ fn main() {
 
   
 }
+  
+```
 
+```
 
+cargo run -- example/main.ms --dbg ./declarations -o main.o -e main -r  -- cmd line args
   
 ```

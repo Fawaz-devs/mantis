@@ -29,8 +29,8 @@ struct Args {
     // Input Mantis File
     input: String,
     // Print AST to a file or console
-    #[arg(long, help = "write ast to the mentioned path")]
-    ast: Option<String>,
+    #[arg(long, help = "write dbg! of parsed file to the mentioned path")]
+    dbg: Option<String>,
     // Output .o file
     #[arg(long, short, help = "write .o file to the mentioned path")]
     obj: Option<String>,
@@ -107,7 +107,7 @@ fn handle0(args: Args) {
     let include_dirs = Vec::new();
     // let (fns, sr) = collect_functions(input);
 
-    if let Some(ast_path) = args.ast {
+    if let Some(ast_path) = args.dbg {
         let content = format!("{:#?}", declarations);
         std::fs::write(&ast_path, &content);
         log::info!("wrote ast to {} {} bytes", ast_path, content.len());
